@@ -103,3 +103,6 @@ htmlcov/
 .cache/
 .pytest_cache/
 .mypy_cache/
+
+# Ignore output directories
+outputs/
