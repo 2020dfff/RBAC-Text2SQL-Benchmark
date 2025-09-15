@@ -116,46 +116,38 @@ class Oracle:
             indexed_query_key_list = query_key_list if query_key_list else []
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            if indexed_query_key_list:
+            future_results = []
+            for i, p in enumerate(prompt_user_all):
+                query_key = indexed_query_key_list[i] if indexed_query_key_list else None
                 if single_query_fn is openai_chat_query:
-                    future_results = [
+                    future_results.append(
                         executor.submit(single_query_fn, self.client, model_name,
-                                     prompt_sys[i], p, temp, top_p,
-                                     max_completion_tokens, indexed_query_key_list[i])
-                        for i, p in enumerate(prompt_user_all)
-                    ]
+                                        prompt_sys[i], p, temp, top_p,
+                                        max_completion_tokens, query_key)
+                    )
+                elif single_query_fn is deepseek_chat_query:
+                    future_results.append(
+                        executor.submit(single_query_fn, self.client, model_name,
+                                        prompt_sys[i], p, temp, top_p,
+                                        max_completion_tokens, query_key)
+                    )
                 else:
-                    future_results = [
+                    future_results.append(
                         executor.submit(single_query_fn, self.client, model_name,
-                                     prompt_sys[i], p, temp, top_p,
-                                     indexed_query_key_list[i])
-                        for i, p in enumerate(prompt_user_all)
-                    ]
-            else:
-                if single_query_fn is openai_chat_query:
-                    future_results = [
-                        executor.submit(single_query_fn, self.client, model_name,
-                                     prompt_sys[i], p, temp, top_p,
-                                     max_completion_tokens)
-                        for i, p in enumerate(prompt_user_all)
-                    ]
-                else:
-                    future_results = [
-                        executor.submit(single_query_fn, self.client, model_name,
-                                     prompt_sys[i], p, temp, top_p)
-                        for i, p in enumerate(prompt_user_all)
-                    ]
-        
+                                        prompt_sys[i], p, temp, top_p,
+                                        query_key)
+                    )
+
             for future in tqdm(as_completed(future_results),
-                             total=len(prompt_user_all),
-                             desc="Processing Items"):
+                               total=len(prompt_user_all),
+                               desc="Processing Items"):
                 result = future.result()
                 results.append(result)
-                
+
         if reorder:
-            results.sort(key=lambda x: int(x["query"].split("_")[0]))
+            results.sort(key=lambda x: int(x["query"].split("_")[0]) if x and "query" in x and x["query"] and x["query"].split("_")[0].isdigit() else 0)
             for result in results:
-                if "_" in result["query"]:
+                if result and "_" in result.get("query", ""):
                     result["query"] = "_".join(result["query"].split("_")[1:])
 
         return results
