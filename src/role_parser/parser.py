@@ -3,9 +3,10 @@
 import re
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from datetime import datetime
 from pathlib import Path
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -57,14 +58,57 @@ class RoleParser:
         
         return '; '.join(permissions)
 
-    def parse_roles(self, text: str) -> List[Dict[str, str]]:
+    @staticmethod
+    def validate_tables(db_path: str) -> Set[str]:
+        """
+        Extract table names from SQLite database.
+        
+        Args:
+            db_path (str): Path to the SQLite database file
+            
+        Returns:
+            Set[str]: Set of valid table names in the database
+        
+        Raises:
+            sqlite3.Error: If there's an error connecting to or querying the database
+        """
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                # Query for all table names in the database
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = {row[0].lower() for row in cursor.fetchall()}
+                return tables
+        except sqlite3.Error as e:
+            logger.error(f"Error accessing SQLite database at {db_path}: {str(e)}")
+            raise
+
+    def parse_roles(self, text: str, db_path: Optional[str] = None) -> List[Dict[str, str]]:
         """
         Parse multiple role assignments from text into structured format (ROLE, DESCRIPTION, TABLES only).
+        Optionally validates table names against a SQLite database schema.
+
+        Args:
+            text (str): The text containing role definitions
+            db_path (Optional[str]): Path to SQLite database for table validation.
+                                   If provided, will validate table names.
+        
+        Returns:
+            List[Dict[str, str]]: List of parsed roles with validation markers if needed
         """
         lines = text.strip().split('\n')
         roles = []
         current_role = None
         required_fields = ['role', 'description', 'tables']
+        
+        # Get valid table names if db_path is provided
+        valid_tables = set()
+        if db_path:
+            try:
+                valid_tables = self.validate_tables(db_path)
+            except sqlite3.Error as e:
+                logger.warning(f"Could not validate tables against database: {str(e)}")
+                db_path = None  # Disable validation if database access fails
 
         for line in lines:
             line = line.strip()
@@ -78,6 +122,13 @@ class RoleParser:
                         else:
                             current_role[key] = self.clean_value(current_role[key])
                     if current_role['role'] and current_role['description'] and current_role['tables']:
+                        # Validate tables if db_path is provided
+                        if db_path and valid_tables:
+                            tables = {t.strip().lower() for t in current_role['tables'].split(',')}
+                            invalid_tables = tables - valid_tables
+                            if invalid_tables:
+                                current_role['tables'] += " NEED HUMAN VERIFICATION (Invalid tables: " + \
+                                                        ", ".join(invalid_tables) + ")"
                         roles.append(current_role.copy())
                     current_role = None
                 continue
@@ -129,6 +180,14 @@ class RoleParser:
                     current_role[key] = self.clean_value(current_role[key])
                 else:
                     current_role[key] = self.clean_value(current_role[key])
+            
             if current_role['role'] and current_role['description'] and current_role['tables']:
+                # Validate tables if db_path is provided
+                if db_path and valid_tables:
+                    tables = {t.strip().lower() for t in current_role['tables'].split(',')}
+                    invalid_tables = tables - valid_tables
+                    if invalid_tables:
+                        current_role['tables'] += " NEED HUMAN VERIFICATION (Invalid tables: " + \
+                                                ", ".join(invalid_tables) + ")"
                 roles.append(current_role.copy())
         return roles

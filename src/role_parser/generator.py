@@ -142,28 +142,52 @@ class ParallelRoleGenerator:
             return []
 
     def log_api_statistics(self, responses: List[Dict]):
+        """
+        Log API usage statistics, with different outputs based on model capabilities.
+        For DeepSeek API which supports prompt caching, includes cache statistics.
+        For other APIs (OpenAI etc), only shows basic token counts.
+        """
         total_prompt, total_completion, total_cached = 0, 0, 0
+        has_cache_info = False
+        
         for r in responses:
             usage = r.get('usage', {})
+            if not usage:
+                continue
+                
             total_prompt += usage.get('prompt_tokens', 0)
             total_completion += usage.get('completion_tokens', 0)
+            
+            # Check if this response has cache information
             details = usage.get('prompt_tokens_details', {})
-            cached = getattr(details, 'cached_tokens', 0) if hasattr(details, 'cached_tokens') else 0
-            total_cached += cached
-        hit_rate = (total_cached / total_prompt * 100) if total_prompt else 0
-        logger.info(f"Summary Statistics: Total API Calls: {len(responses)}, Total Prompt Tokens: {total_prompt}, Total Completion Tokens: {total_completion}, Total Cached Tokens: {total_cached}, Overall Cache Hit Rate: {hit_rate:.1f}%")
+            if hasattr(details, 'cached_tokens'):
+                has_cache_info = True
+                total_cached += details.cached_tokens
 
-    def process_databases_parallel(self, db_paths: List[Path]) -> List[Dict]:
+        # Basic statistics that work for all models
+        basic_stats = f"Summary Statistics: Total API Calls: {len(responses)}"
+        if total_prompt or total_completion:
+            basic_stats += f", Total Prompt Tokens: {total_prompt}, Total Completion Tokens: {total_completion}"
+            
+        # Add cache statistics only for models that support it (e.g., DeepSeek)
+        if has_cache_info and total_prompt > 0:
+            hit_rate = (total_cached / total_prompt * 100)
+            basic_stats += f", Total Cached Tokens: {total_cached}, Overall Cache Hit Rate: {hit_rate:.1f}%"
+            
+        logger.info(basic_stats)
+
+    def process_databases_parallel(self, db_dirs: List[Path], sqlite_paths: Optional[Dict[str, str]] = None) -> List[Dict]:
         """Process multiple databases in parallel using Oracle's query_all functionality.
         
         Args:
-            db_paths (List[Path]): List of paths to database directories
-            n_workers (int): Number of worker threads to use
+            db_dirs (List[Path]): List of paths to database directories
+            sqlite_paths (Optional[Dict[str, str]]): Dictionary mapping database names to their SQLite file paths
+                                                   for table validation
         Returns:
             List[Dict]: List of dictionaries containing database names, roles, and timestamps
         """
         schema_contents, valid_dbs, skipped = [], [], []
-        for db in db_paths:
+        for db in db_dirs:
             content = self.read_schema_file(db)
             if content:
                 schema_contents.append(content)
@@ -182,15 +206,26 @@ class ParallelRoleGenerator:
             results = []
             for db, resp in zip(valid_dbs, responses):
                 usage = resp.get('usage', {})
-                prompt_tokens = usage.get('prompt_tokens', 0)
-                details = usage.get('prompt_tokens_details', {})
-                cached = getattr(details, 'cached_tokens', 0) if hasattr(details, 'cached_tokens') else 'N/A'
-                non_cached = prompt_tokens - cached if isinstance(cached, int) else 'N/A'
-                hit_rate = f"{(cached / prompt_tokens * 100):.1f}%" if isinstance(cached, int) and prompt_tokens else 'N/A'
-                roles = self.parser.parse_roles(resp.get('answer', '')) if resp.get('answer') else []
+                if not usage:
+                    token_info = ""
+                else:
+                    prompt_tokens = usage.get('prompt_tokens', 0)
+                    details = usage.get('prompt_tokens_details', {})
+                    
+                    # Check if model supports cache information
+                    if hasattr(details, 'cached_tokens'):
+                        cached = details.cached_tokens
+                        non_cached = prompt_tokens - cached
+                        hit_rate = f"{(cached / prompt_tokens * 100):.1f}%" if prompt_tokens else "0.0%"
+                        token_info = f" - Cached Tokens: {cached}; Uncached tokens: {non_cached}; Hit rates: {hit_rate}"
+                    else:
+                        token_info = f" - Prompt Tokens: {prompt_tokens}" if prompt_tokens else ""
+                # Get SQLite path for table validation if available
+                db_sqlite_path = sqlite_paths.get(db.name) if sqlite_paths else None
+                roles = self.parser.parse_roles(resp.get('answer', ''), db_sqlite_path) if resp.get('answer') else []
                 if roles:
                     results.append({'database': db.name, 'roles': roles, 'timestamp': datetime.now().isoformat()})
-                    logger.info(f"Generated {len(roles)} roles for {db.name} - Cached Tokens: {cached}; Uncached tokens: {non_cached}; Hit rates: {hit_rate}")
+                    logger.info(f"Generated {len(roles)} roles for {db.name}{token_info}")
                 else:
                     logger.error(f"No valid roles parsed for database '{db.name}'")
             return results
