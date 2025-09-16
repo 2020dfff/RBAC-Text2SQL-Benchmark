@@ -59,63 +59,52 @@ class RoleParser:
 
     def parse_roles(self, text: str) -> List[Dict[str, str]]:
         """
-        Parse multiple role assignments from text into structured format.
-        
-        Args:
-            text (str): Raw text containing role assignments
-            
-        Returns:
-            list: List of dictionaries containing parsed role information
+        Parse multiple role assignments from text into structured format (ROLE, DESCRIPTION, TABLES only).
         """
         lines = text.strip().split('\n')
         roles = []
         current_role = None
-        
+        required_fields = ['role', 'description', 'tables']
+
         for line in lines:
             line = line.strip()
             if not line:
-                if current_role and all(k in current_role for k in ['role', 'description', 'permissions', 'justification']):
+                if current_role and all(k in current_role for k in required_fields):
                     for key in current_role:
                         if key == 'role':
                             current_role[key] = self.extract_role_name(current_role[key])
-                        elif key == 'permissions':
-                            current_role[key] = self.normalize_permissions(current_role[key])
+                        elif key == 'tables':
+                            current_role[key] = self.clean_value(current_role[key])
                         else:
                             current_role[key] = self.clean_value(current_role[key])
-                    
-                    if current_role['role'] and current_role['description']:
+                    if current_role['role'] and current_role['description'] and current_role['tables']:
                         roles.append(current_role.copy())
                     current_role = None
                 continue
-            
+
             # Check for new role
             if 'ROLE:' in line.upper() or 'ROLE：' in line.upper():
-                if current_role and all(k in current_role for k in ['role', 'description', 'permissions', 'justification']):
+                if current_role and all(k in current_role for k in required_fields):
                     for key in current_role:
                         if key == 'role':
                             current_role[key] = self.extract_role_name(current_role[key])
-                        elif key == 'permissions':
-                            current_role[key] = self.normalize_permissions(current_role[key])
+                        elif key == 'tables':
+                            current_role[key] = self.clean_value(current_role[key])
                         else:
                             current_role[key] = self.clean_value(current_role[key])
-                    
-                    if current_role['role'] and current_role['description']:
+                    if current_role['role'] and current_role['description'] and current_role['tables']:
                         roles.append(current_role.copy())
-                
                 current_role = {}
                 value = re.split('(?i)ROLE[:：]', line)[-1].strip()
                 current_role['role'] = value
                 continue
-            
+
             # Process other fields
             if current_role is not None:
                 field_mappings = {
                     'DESCRIPTION': 'description',
-                    'PERMISSIONS': 'permissions',
-                    'JUSTIFICATION': 'justification'
+                    'TABLES': 'tables',
                 }
-                
-                # Check if line starts with any field marker
                 matched = False
                 for field, key in field_mappings.items():
                     if line.upper().startswith(f"{field}:") or line.upper().startswith(f"{field}："):
@@ -123,26 +112,23 @@ class RoleParser:
                         current_role[key] = value
                         matched = True
                         break
-                
                 # If not a new field, append to the last field
                 if not matched and current_role:
-                    for key in ['role', 'description', 'permissions', 'justification']:
+                    for key in required_fields:
                         if key in current_role:
-                            if not any(f.upper() in line.upper() for f in ['ROLE:', 'DESCRIPTION:', 'PERMISSIONS:', 'JUSTIFICATION:']):
+                            if not any(f.upper() in line.upper() for f in ['ROLE:', 'DESCRIPTION:', 'TABLES:']):
                                 current_role[key] += ' ' + line
                                 break
-        
+
         # Process the last role
-        if current_role and all(k in current_role for k in ['role', 'description', 'permissions', 'justification']):
+        if current_role and all(k in current_role for k in required_fields):
             for key in current_role:
                 if key == 'role':
                     current_role[key] = self.extract_role_name(current_role[key])
-                elif key == 'permissions':
-                    current_role[key] = self.normalize_permissions(current_role[key])
+                elif key == 'tables':
+                    current_role[key] = self.clean_value(current_role[key])
                 else:
                     current_role[key] = self.clean_value(current_role[key])
-            
-            if current_role['role'] and current_role['description']:
+            if current_role['role'] and current_role['description'] and current_role['tables']:
                 roles.append(current_role.copy())
-        
         return roles
