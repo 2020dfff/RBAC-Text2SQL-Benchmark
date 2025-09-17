@@ -70,6 +70,7 @@ spider/database/
 data/data_pg/
 data/schemas_pg/
 data/verify_pg/
+data/*.json
 spider/
 
 # Large data files
