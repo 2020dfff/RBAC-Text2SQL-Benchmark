@@ -125,6 +125,20 @@ class SpiderDataProcessor:
         except Exception as e:
             logger.error(f"Error getting database statistics: {str(e)}")
             raise
+            
+    def get_db_folders(self) -> List[Path]:
+        """
+        Get list of database folders in Spider dataset.
+        
+        Returns:
+            List[Path]: List of database folder paths
+        """
+        if not self.spider_db_dir.exists():
+            logger.warning(f"Spider database directory not found at {self.spider_db_dir}. Creating it now.")
+            self.spider_db_dir.mkdir(parents=True, exist_ok=True)
+            return []
+        
+        return [d for d in self.spider_db_dir.iterdir() if d.is_dir()]
 
 if __name__ == '__main__':
     # Setup logging
