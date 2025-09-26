@@ -3,6 +3,7 @@ Generate role-based access control text2sql dataset by combining Spider dataset 
 """
 
 import json
+import sys
 import logging
 import sqlparse
 from datetime import datetime
@@ -33,6 +34,15 @@ class RoleSQLGenerator:
             'test': self.data_dir / 'spider_test_data.json',
             'combined': self.data_dir / 'spider_combined_data.json'
         }
+        
+        # Tables information files
+        self.tables_files = {
+            'train_dev': project_root / 'data' / 'spider' / 'tables.json',
+            'test': project_root / 'data' / 'spider' / 'test_tables.json'
+        }
+        
+        # Cache for table information
+        self._tables_cache = {}
         
     def extract_tables_from_query(self, query: str) -> Set[str]:
         """
@@ -224,23 +234,121 @@ class RoleSQLGenerator:
             List[Dict[str, str]]: List of Spider examples
         """
         if data_source not in self.data_sources:
-            raise ValueError(f"Invalid data source: {data_source}. Available: {list(self.data_sources.keys())}")
+            raise ValueError(f"Unknown data source: {data_source}")
             
         data_path = self.data_sources[data_source]
         
         try:
             with open(data_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                logger.info(f"Loaded {len(data)} examples from {data_source} data")
-                return data
+                return json.load(f)
                 
         except FileNotFoundError:
             logger.error(f"Data file not found: {data_path}")
-            logger.error(f"Please ensure {data_source} data has been processed first")
-            raise
+            return []
         except Exception as e:
-            logger.error(f"Error loading {data_source} data from {data_path}: {str(e)}")
-            raise
+            logger.error(f"Error loading data: {str(e)}")
+            return []
+            
+    def load_table_info(self, data_source: str = 'train') -> Dict[str, Dict[str, Any]]:
+        """
+        Load table information from Spider tables.json files.
+        
+        Args:
+            data_source (str): Data source type ('train', 'dev', 'test', 'combined')
+            
+        Returns:
+            Dict[str, Dict[str, Any]]: Table information by database ID
+        """
+        # Determine which tables file to use
+        if data_source in ['train', 'dev', 'combined']:
+            tables_key = 'train_dev'
+        else:  # test
+            tables_key = 'test'
+            
+        # Check cache first
+        if tables_key in self._tables_cache:
+            return self._tables_cache[tables_key]
+            
+        tables_file = self.tables_files[tables_key]
+        
+        try:
+            with open(tables_file, 'r', encoding='utf-8') as f:
+                tables_list = json.load(f)
+            
+            # Convert to dict indexed by db_id
+            tables_dict = {item['db_id']: item for item in tables_list}
+            
+            # Cache the result
+            self._tables_cache[tables_key] = tables_dict
+            
+            logger.info(f"Loaded table info for {len(tables_dict)} databases from {tables_file}")
+            return tables_dict
+            
+        except FileNotFoundError:
+            logger.error(f"Tables file not found: {tables_file}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error loading table info: {str(e)}")
+            return {}
+    
+    def generate_database_instruction(self, db_id: str, table_info: Dict[str, Any]) -> str:
+        """
+        Generate database instruction similar to decode_json_file function.
+        
+        Args:
+            db_id (str): Database ID
+            table_info (Dict[str, Any]): Table information from tables.json
+            
+        Returns:
+            str: Generated instruction string
+        """
+        try:
+            tables = table_info["table_names_original"]
+            columns = table_info["column_names_original"][1:]  # Skip the first [-1, "*"] entry
+            primary_keys = table_info["primary_keys"]
+            foreign_keys = table_info["foreign_keys"]
+            
+            # Start building the instruction
+            instruction = f"{db_id} contains tables such as " + ", ".join(tables) + ". "
+            
+            # Add column information for each table
+            for i, table_name in enumerate(tables):
+                table_columns = [column[1] for column in columns if column[0] == i]
+                instruction += f"Table {table_name} has columns such as " + ", ".join(table_columns) + ". "
+                
+                # Add primary key information
+                for j in range(len(primary_keys)):
+                    if isinstance(primary_keys[j], int):
+                        # Single primary key
+                        if columns[primary_keys[j] - 1][0] == i:
+                            instruction += f"{columns[primary_keys[j] - 1][1]} is the primary key.\n"
+                    elif isinstance(primary_keys[j], list):
+                        # Composite primary key
+                        keys = []
+                        for k in range(len(primary_keys[j])):
+                            if columns[primary_keys[j][k] - 1][0] == i:
+                                keys.append(columns[primary_keys[j][k] - 1][1])
+                        if keys:
+                            instruction += f"The combination of ({', '.join(keys)}) are the primary key.\n"
+            
+            # Add foreign key information
+            for key in foreign_keys:
+                try:
+                    foreign_column = columns[key[0] - 1][1]
+                    foreign_table = tables[columns[key[0] - 1][0]]
+                    reference_column = columns[key[1] - 1][1]
+                    reference_table = tables[columns[key[1] - 1][0]]
+                    
+                    instruction += f"The {foreign_column} of {foreign_table} is the foreign key of {reference_column} of {reference_table}.\n"
+                except (IndexError, KeyError) as e:
+                    logger.debug(f"Skipping invalid foreign key in {db_id}: {key}, error: {str(e)}")
+                    continue
+            
+            return instruction.strip()
+            
+        except Exception as e:
+            logger.error(f"Error generating instruction for {db_id}: {str(e)}")
+            return f"{db_id} database schema information."
             
     def check_query_permission(self, query_tables: Set[str], role_tables: str) -> bool:
         """
@@ -286,6 +394,18 @@ class RoleSQLGenerator:
         # Load data
         role_assignments = self.load_role_assignments(role_file_path)
         spider_data = self.load_spider_data(data_source)
+        table_info = self.load_table_info(data_source)
+        
+        # Import prompt templates from configs
+        try:
+            configs_path = self.project_root / 'configs'
+            if str(configs_path) not in sys.path:
+                sys.path.insert(0, str(configs_path))
+            from prompts import INSTRUCTION_PROMPT, INPUT_PROMPT
+        except ImportError:
+            logger.warning("Could not import prompt templates from configs, using defaults")
+            INSTRUCTION_PROMPT = "I want you to act as a SQL terminal in front of an example database, you need only to return the sql command to me.Below is an instruction that describes a task, Write a response that appropriately completes the request.\n##Instruction:\n{}\n"
+            INPUT_PROMPT = "###Input:\n{}\n\n###Response:"
         
         # Generate dataset
         dataset = []
@@ -302,6 +422,15 @@ class RoleSQLGenerator:
                 
             processed_dbs.add(db_id)
             
+            # Generate instruction for this database
+            instruction = ""
+            if db_id in table_info:
+                db_instruction = self.generate_database_instruction(db_id, table_info[db_id])
+                instruction = INSTRUCTION_PROMPT.format(db_instruction)
+            else:
+                logger.warning(f"No table info found for database: {db_id}")
+                instruction = INSTRUCTION_PROMPT.format(f"{db_id} database")
+            
             # Extract tables from query
             query_tables = self.extract_tables_from_query(example['query'])
             
@@ -310,12 +439,17 @@ class RoleSQLGenerator:
                 role_name = role_info['role']
                 role_tables = role_info['tables']
                 
+                # Format input using INPUT_PROMPT template
+                formatted_input = INPUT_PROMPT.format(example['question'])
+                
                 # Create dataset entry
                 entry = {
                     'db_id': db_id,
+                    'instruction': instruction,
                     'role': role_name,
                     'tables': role_tables,
-                    'question': example['question']
+                    'input': formatted_input,
+                    'output': example['query']
                 }
                 
                 # Add source information if available
@@ -324,11 +458,11 @@ class RoleSQLGenerator:
                 
                 # Check permission and set query
                 if self.check_query_permission(query_tables, role_tables):
-                    entry['query'] = example['query']
+                    entry['output'] = example['query']
                 else:
-                    entry['query'] = "Sorry, I cannot answer."
+                    entry['output'] = "Sorry, I cannot answer."
                     # Add both the denial message and the original query for verification
-                    # entry['query'] = f"Sorry, I cannot answer. Original query (for verification): {example['query']}"
+                    # entry['output'] = f"Sorry, I cannot answer. Original query (for verification): {example['query']}"
                 dataset.append(entry)
         
         # Log statistics

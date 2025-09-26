@@ -79,6 +79,13 @@ Remember:
 - Follow the exact Output Format specified in the system prompt.
 """
 
+INSTRUCTION_PROMPT = """\
+I want you to act as a SQL terminal in front of an example database, \
+you need only to return the sql command to me.Below is an instruction that describes a task, \
+Write a response that appropriately completes the request.\n"
+##Instruction:\n{}\n"""
+INPUT_PROMPT = "###Input:\n{}\n\n###Response:"
+
 # Consider:
 # - The different types of users who might need access
 # - Various business functions and responsibilities

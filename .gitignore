@@ -67,6 +67,8 @@ Thumbs.db
 
 # Project specific data
 spider/database/
+data/Chase
+data/livesqlbench-base-lite-sqlite
 data/data_pg/
 data/schemas_pg/
 data/verify_pg/
