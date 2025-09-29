@@ -263,7 +263,7 @@ class BirdRoleProcessor:
         if filename_suffix is None:
             filename_suffix = assignments_data['metadata']['timestamp']
         
-        output_file = output_dir / f"role_assignments_{filename_suffix}_bird_dev.json"
+        output_file = output_dir / f"role_assignments_bird_dev_{filename_suffix}.json"
         
         with open(output_file, 'w', encoding='utf-8') as f:
             import json
