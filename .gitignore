@@ -81,8 +81,8 @@ Bird/
 # db migrations ignored for now
 db_migration/
 
-# db-gpt-sql file
-src/dbgpt_hub_sql/data_process_original
+# experiments code ignore for now
+experiments/
 
 # Large data files
 *.csv

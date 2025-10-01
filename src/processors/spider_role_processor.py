@@ -2,20 +2,33 @@
 Process and convert Spider dataset format
 """
 
-import os
-import sys
 import json
 import logging
 import sqlite3
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 from tqdm import tqdm
 
 logger = logging.getLogger('spider_data')
 
+
+def _ensure_list(value: Optional[Iterable[Path]]) -> List[Path]:
+    """Coerce an iterable of paths into a sorted list."""
+
+    if value is None:
+        return []
+    return sorted(list(value))
+
 class SpiderDataProcessor:
     """Process Spider dataset and extract relevant information."""
     
+    SPLIT_FILE_MAP = {
+        'train': 'train_spider.json',
+        'dev': 'dev.json',
+        'test': 'test.json',
+    }
+
     def __init__(self, project_root: Path):
         """
         Initialize processor with project root path.
@@ -28,6 +41,269 @@ class SpiderDataProcessor:
         self.spider_db_dir = self.spider_dir / 'database'
         self.spider_test_db_dir = self.spider_dir / 'test_database'
         self.output_dir = project_root / 'data'
+
+    # ------------------------------------------------------------------
+    # In-memory loading helpers
+    # ------------------------------------------------------------------
+
+    def load_raw_split(self, split: str, *, require_query: bool = True) -> List[Dict[str, str]]:
+        """Load raw Spider records for a given split without persisting to disk.
+
+        Args:
+            split: Dataset split to load ("train", "dev", or "test").
+            require_query: When True, rows missing a SQL query are skipped.
+
+        Returns:
+            List of dictionaries containing the raw Spider fields (db_id, question, query).
+        """
+
+        normalized_split = split.lower()
+        if normalized_split not in self.SPLIT_FILE_MAP:
+            raise ValueError(f"Unsupported Spider split: {split}")
+
+        filename = self.SPLIT_FILE_MAP[normalized_split]
+        input_file = self.spider_dir / filename
+
+        if not input_file.exists():
+            raise FileNotFoundError(f"Spider {split} file not found: {input_file}")
+
+        with open(input_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        processed: List[Dict[str, str]] = []
+        skipped = 0
+
+        for item in data:
+            db_id = item.get('db_id')
+            question = item.get('question')
+            query = item.get('query')
+
+            if not db_id or question is None:
+                skipped += 1
+                continue
+
+            if require_query and not query:
+                skipped += 1
+                continue
+
+            record = {
+                'db_id': db_id,
+                'question': question,
+                'query': query or '',
+                'source': normalized_split,
+            }
+            processed.append(record)
+
+        logger.info(
+            "Loaded %s Spider %s records (%s skipped for missing fields)",
+            f"{len(processed):,}",
+            normalized_split,
+            skipped,
+        )
+
+        return processed
+
+    def load_raw_splits(self, splits: Sequence[str]) -> Dict[str, List[Dict[str, str]]]:
+        """Convenience helper returning raw Spider data for multiple splits."""
+
+        datasets: Dict[str, List[Dict[str, str]]] = {}
+        for split in splits:
+            datasets[split] = self.load_raw_split(split)
+        return datasets
+
+
+class SpiderRoleProcessor:
+    """Generate RBAC role assignments for Spider databases using an LLM."""
+
+    def __init__(
+        self,
+        generator,
+        database_dir: Path,
+        *,
+        dataset_label: str = "spider_dev",
+    ) -> None:
+        """Initialise the processor.
+
+        Args:
+            generator: An instance of :class:`ParallelRoleGenerator` (type hinted
+                dynamically to avoid circular imports).
+            database_dir: Directory containing Spider database folders.
+            dataset_label: Identifier used when persisting assignment artefacts.
+        """
+
+        self.generator = generator
+        self.database_dir = database_dir
+        self.dataset_label = dataset_label
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def list_database_dirs(self, db_names: Optional[Iterable[str]] = None) -> List[Path]:
+        """Return candidate Spider database directories.
+
+        Args:
+            db_names: Optional iterable of specific database names to include.
+
+        Returns:
+            A sorted list of directories matching the provided names (or all
+            databases when ``db_names`` is ``None``).
+        """
+
+        if not self.database_dir.exists():
+            logger.error("Spider database directory missing: %s", self.database_dir)
+            return []
+
+        if db_names is None:
+            return sorted(p for p in self.database_dir.iterdir() if p.is_dir())
+
+        resolved: List[Path] = []
+        for name in db_names:
+            candidate = self.database_dir / name
+            if candidate.exists() and candidate.is_dir():
+                resolved.append(candidate)
+            else:
+                logger.warning("Requested Spider database not found: %s", candidate)
+        return sorted(resolved)
+
+    def process_databases(
+        self,
+        db_names: Optional[Iterable[str]] = None,
+        *,
+        batch_size: int = 8,
+        run_timestamp: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Run parallel role generation for the requested databases."""
+
+        if self.generator is None:
+            raise RuntimeError("ParallelRoleGenerator is required to process Spider databases.")
+
+        db_dirs = self.list_database_dirs(db_names)
+        if not db_dirs:
+            logger.error("No Spider databases available for processing.")
+            return self._empty_result(run_timestamp, 0, batch_size, self.dataset_label)
+
+        valid_dirs = self._filter_valid_databases(db_dirs)
+        if not valid_dirs:
+            logger.error("No valid Spider databases after schema/sqlite validation.")
+            return self._empty_result(run_timestamp, len(db_dirs), batch_size, self.dataset_label)
+
+        timestamp = run_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+        total_processed = 0
+        total_roles = 0
+        assignments: Dict[str, List[Dict[str, Any]]] = {}
+
+        n_batches = (len(valid_dirs) + batch_size - 1) // batch_size
+        for idx in range(n_batches):
+            batch_start = idx * batch_size
+            batch_dirs = valid_dirs[batch_start : batch_start + batch_size]
+            logger.info(
+                "Processing Spider batch %s/%s (%s databases)",
+                idx + 1,
+                n_batches,
+                len(batch_dirs),
+            )
+
+            results = self.generator.process_databases_parallel(batch_dirs)
+            processed_in_batch = 0
+            roles_in_batch = 0
+
+            for result in results:
+                if not result:
+                    continue
+                db_name = result.get("database") or result.get("db_id")
+                roles = result.get("roles")
+                if not db_name or not roles:
+                    continue
+                assignments[db_name] = roles
+                processed_in_batch += 1
+                roles_in_batch += len(roles)
+                logger.info("  ✓ %s: %s roles", db_name, len(roles))
+
+            total_processed += processed_in_batch
+            total_roles += roles_in_batch
+
+            logger.info(
+                "Batch %s complete: %s/%s databases produced roles (%s roles)",
+                idx + 1,
+                processed_in_batch,
+                len(batch_dirs),
+                roles_in_batch,
+            )
+
+        return {
+            "assignments": assignments,
+            "metadata": {
+                "timestamp": timestamp,
+                "total_databases": len(valid_dirs),
+                "processed_databases": total_processed,
+                "total_roles_generated": total_roles,
+                "batch_size": batch_size,
+                "dataset_type": self.dataset_label,
+            },
+        }
+
+    def save_role_assignments(
+        self,
+        assignments_data: Dict[str, Any],
+        output_dir: Path,
+        *,
+        filename_suffix: Optional[str] = None,
+    ) -> Path:
+        """Persist generated role assignments to ``output_dir``."""
+
+        timestamp = filename_suffix or assignments_data.get("metadata", {}).get("timestamp")
+        if timestamp is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"role_assignments_{self.dataset_label}_{timestamp}.json"
+        with output_path.open("w", encoding="utf-8") as f:
+            json.dump(assignments_data, f, ensure_ascii=False, indent=2)
+
+        logger.info("Spider role assignments saved to %s", output_path)
+        return output_path
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _filter_valid_databases(self, db_dirs: Iterable[Path]) -> List[Path]:
+        valid: List[Path] = []
+        for db_path in _ensure_list(db_dirs):
+            schema_file = db_path / "schema.sql"
+            sqlite_candidates = list(db_path.glob("*.sqlite"))
+
+            if not schema_file.exists():
+                logger.warning("Skipping %s: schema.sql not found", db_path.name)
+                continue
+
+            if not sqlite_candidates:
+                logger.warning("Skipping %s: no SQLite file found", db_path.name)
+                continue
+
+            valid.append(db_path)
+
+        return valid
+
+    @staticmethod
+    def _empty_result(
+        run_timestamp: Optional[str],
+        requested_databases: int,
+        batch_size: int,
+        dataset_label: str,
+    ) -> Dict[str, Any]:
+        timestamp = run_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+        return {
+            "assignments": {},
+            "metadata": {
+                "timestamp": timestamp,
+                "total_databases": requested_databases,
+                "processed_databases": 0,
+                "total_roles_generated": 0,
+                "batch_size": batch_size,
+                "dataset_type": dataset_label,
+            },
+        }
+
         
     def get_db_table_count(self, db_path: Path) -> Optional[int]:
         """

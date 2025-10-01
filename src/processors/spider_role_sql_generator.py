@@ -8,7 +8,7 @@ import logging
 import sqlparse
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Set, Any
+from typing import Dict, List, Set, Any, Optional
 
 logger = logging.getLogger('role_sql')
 
@@ -380,100 +380,139 @@ class RoleSQLGenerator:
                 
         return True
         
-    def generate_role_sql_dataset(self, role_file_path: str = None, data_source: str = 'train') -> List[Dict[str, str]]:
-        """
-        Generate role-based SQL dataset by combining Spider data with role assignments.
-        
+    def generate_role_sql_dataset(
+        self,
+        role_file_path: str = None,
+        data_source: str = 'train',
+        *,
+        spider_data: Optional[List[Dict[str, Any]]] = None,
+        instruction_prompt: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
+        """Generate Spider role-conditioned dataset with minimal fields.
+
         Args:
-            role_file_path (str, optional): Path to role assignments JSON file
-            data_source (str): Data source type ('train', 'dev', 'test', 'combined')
-            
+            role_file_path: Path to the role assignment JSON file.
+            data_source: Spider split to use (train, dev, test, combined).
+            spider_data: Optional pre-processed examples; if omitted, the split
+                will be loaded from disk.
+            instruction_prompt: Optional override for instruction template. When
+                omitted, the prompt from ``configs/prompts.py`` (``INSTRUCTION_PROMPT``)
+                is used.
+
         Returns:
-            List[Dict[str, str]]: Generated dataset
+            A list of dictionaries. Each entry contains ``db_id``, ``instruction``,
+            ``role``, ``tables``, ``input``, and ``output``.
         """
-        # Load data
+
         role_assignments = self.load_role_assignments(role_file_path)
-        spider_data = self.load_spider_data(data_source)
+        if not role_assignments:
+            logger.error("No role assignments available; aborting dataset generation.")
+            return []
+
+        if spider_data is None:
+            spider_data = self.load_spider_data(data_source)
+
+        if not spider_data:
+            logger.error("Spider source data is empty; aborting dataset generation.")
+            return []
+
         table_info = self.load_table_info(data_source)
-        
-        # Import prompt templates from configs
+
         try:
             configs_path = self.project_root / 'configs'
             if str(configs_path) not in sys.path:
                 sys.path.insert(0, str(configs_path))
-            from prompts import INSTRUCTION_PROMPT, INPUT_PROMPT
+            from prompts import INSTRUCTION_PROMPT  # type: ignore[import-not-found]
         except ImportError:
-            logger.warning("Could not import prompt templates from configs, using defaults")
-            INSTRUCTION_PROMPT = "I want you to act as a SQL terminal in front of an example database, you need only to return the sql command to me.Below is an instruction that describes a task, Write a response that appropriately completes the request.\n##Instruction:\n{}\n"
-            INPUT_PROMPT = "###Input:\n{}\n\n###Response:"
-        
-        # Generate dataset
-        dataset = []
-        processed_dbs = set()
-        skipped_dbs = set()
-        
+            logger.warning("Could not import INSTRUCTION_PROMPT from configs; using default template.")
+            INSTRUCTION_PROMPT = (
+                "I want you to act as a SQL terminal in front of an example database, you need only to "
+                "return the sql command to me.Below is an instruction that describes a task, Write a response "
+                "that appropriately completes the request.\n##Instruction:\n{}\n"
+            )
+
+        instruction_template = instruction_prompt or INSTRUCTION_PROMPT
+
+        dataset: List[Dict[str, str]] = []
+        processed_dbs: Set[str] = set()
+        skipped_dbs: Set[str] = set()
+        allowed_count = 0
+        denied_count = 0
+
         for example in spider_data:
-            db_id = example['db_id']
-            
-            # Skip if database has no role assignments
+            db_id = example.get('db_id')
+            if not db_id:
+                logger.debug("Skipping record without db_id: %s", example)
+                continue
+
             if db_id not in role_assignments:
                 skipped_dbs.add(db_id)
                 continue
-                
+
+            question = example.get('question') or example.get('input')
+            sql_query = example.get('query') or example.get('output')
+
+            if question is None or not sql_query:
+                logger.debug(
+                    "Skipping record for %s due to missing question or SQL (question=%s, sql_present=%s)",
+                    db_id,
+                    question is not None,
+                    bool(sql_query),
+                )
+                continue
+
             processed_dbs.add(db_id)
-            
-            # Generate instruction for this database
-            instruction = ""
-            if db_id in table_info:
-                db_instruction = self.generate_database_instruction(db_id, table_info[db_id])
-                instruction = INSTRUCTION_PROMPT.format(db_instruction)
-            else:
-                logger.warning(f"No table info found for database: {db_id}")
-                instruction = INSTRUCTION_PROMPT.format(f"{db_id} database")
-            
-            # Extract tables from query
-            query_tables = self.extract_tables_from_query(example['query'])
-            
-            # Generate examples for each role
+
+            instruction = example.get('instruction')
+            if not instruction:
+                if db_id in table_info:
+                    db_instruction = self.generate_database_instruction(db_id, table_info[db_id])
+                    instruction = instruction_template.format(db_instruction)
+                else:
+                    logger.warning("No table info found for database: %s", db_id)
+                    instruction = instruction_template.format(f"{db_id} database")
+
+            input_text = example.get('input') or question
+
+            query_tables = self.extract_tables_from_query(sql_query)
+
             for role_info in role_assignments[db_id]:
-                role_name = role_info['role']
-                role_tables = role_info['tables']
-                
-                # Format input using INPUT_PROMPT template
-                formatted_input = INPUT_PROMPT.format(example['question'])
-                
-                # Create dataset entry
+                role_name = role_info.get('role')
+                role_tables = role_info.get('tables', '')
+
+                if not role_name:
+                    logger.debug("Skipping role entry without name for database %s", db_id)
+                    continue
+
+                has_permission = self.check_query_permission(query_tables, role_tables)
+                output_sql = sql_query if has_permission else "Sorry, I cannot answer."
+
+                if has_permission:
+                    allowed_count += 1
+                else:
+                    denied_count += 1
+
                 entry = {
                     'db_id': db_id,
                     'instruction': instruction,
                     'role': role_name,
                     'tables': role_tables,
-                    'input': formatted_input,
-                    'output': example['query']
+                    'input': input_text,
+                    'output': output_sql,
                 }
-                
-                # Add source information if available
-                if 'source' in example:
-                    entry['source'] = example['source']
-                
-                # Check permission and set query
-                if self.check_query_permission(query_tables, role_tables):
-                    entry['output'] = example['query']
-                else:
-                    entry['output'] = "Sorry, I cannot answer."
-                    # Add both the denial message and the original query for verification
-                    # entry['output'] = f"Sorry, I cannot answer. Original query (for verification): {example['query']}"
+
                 dataset.append(entry)
-        
-        # Log statistics
-        logger.info(f"Dataset generation completed for {data_source} data:")
-        logger.info(f"- Databases processed: {len(processed_dbs)}")
-        logger.info(f"- Databases skipped (no roles): {len(skipped_dbs)}")
-        logger.info(f"- Total examples generated: {len(dataset)}")
-        
+
+        logger.info("Dataset generation completed for %s data:", data_source)
+        logger.info("- Databases processed: %s", len(processed_dbs))
+        logger.info("- Databases skipped (no roles): %s", len(skipped_dbs))
+        logger.info("- Total examples generated: %s", len(dataset))
+        logger.info("- Allowed queries: %s", allowed_count)
+        logger.info("- Denied queries: %s", denied_count)
+
         if skipped_dbs:
-            logger.debug(f"Skipped databases: {sorted(skipped_dbs)}")
-        
+            logger.debug("Skipped databases: %s", sorted(skipped_dbs))
+
         return dataset
         
     def generate_all_datasets(self, role_file_path: str = None, timestamp: str = None) -> Dict[str, Dict[str, Any]]:
@@ -514,7 +553,7 @@ class RoleSQLGenerator:
                     total_examples = len(dataset)
                     databases = len({example['db_id'] for example in dataset})
                     roles = len({(example['db_id'], example['role']) for example in dataset})
-                    denied_queries = sum(1 for example in dataset if "Sorry, I cannot answer." in example['query'])
+                    denied_queries = sum(1 for example in dataset if example.get('output') == "Sorry, I cannot answer.")
                     
                     results[data_source] = {
                         'total_examples': total_examples,
@@ -553,7 +592,7 @@ class RoleSQLGenerator:
                         total_examples = len(combined_dataset)
                         databases = len({example['db_id'] for example in combined_dataset})
                         roles = len({(example['db_id'], example['role']) for example in combined_dataset})
-                        denied_queries = sum(1 for example in combined_dataset if "Sorry, I cannot answer." in example['query'])
+                        denied_queries = sum(1 for example in combined_dataset if example.get('output') == "Sorry, I cannot answer.")
                         
                         results['combined'] = {
                             'total_examples': total_examples,
