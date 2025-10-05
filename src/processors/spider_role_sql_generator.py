@@ -1,19 +1,729 @@
-"""
-Generate role-based access control text2sql dataset by combining Spider dataset with role assignments.
-"""
+"""Generate role-based access control text2sql dataset for Spider."""
 
 import json
 import sys
 import logging
+import sqlite3
 import sqlparse
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Set, Any, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from nltk import word_tokenize
+
+ROOT = Path(__file__).resolve().parents[2]
 
 logger = logging.getLogger('role_sql')
 
+CLAUSE_KEYWORDS = (
+    "select",
+    "from",
+    "where",
+    "group",
+    "order",
+    "limit",
+    "intersect",
+    "union",
+    "except",
+)
+JOIN_KEYWORDS = ("join", "on", "as")
+
+WHERE_OPS = (
+    "not",
+    "between",
+    "=",
+    ">",
+    "<",
+    ">=",
+    "<=",
+    "!=",
+    "in",
+    "like",
+    "is",
+    "exists",
+)
+UNIT_OPS = ("none", "-", "+", "*", "/")
+AGG_OPS = ("none", "max", "min", "count", "sum", "avg")
+TABLE_TYPE = {
+    "sql": "sql",
+    "table_unit": "table_unit",
+}
+
+COND_OPS = ("and", "or")
+SQL_OPS = ("intersect", "union", "except")
+ORDER_OPS = ("desc", "asc")
+
+
+class Schema:
+    """Simple schema mapping table & column names to unique identifiers."""
+
+    def __init__(self, schema: Dict[str, List[str]]):
+        self._schema = schema
+        self._id_map = self._create_id_map(schema)
+
+    @property
+    def schema(self) -> Dict[str, List[str]]:
+        return self._schema
+
+    @property
+    def idMap(self) -> Dict[str, str]:  # Retain legacy attribute name for compatibility
+        return self._id_map
+
+    def _create_id_map(self, schema: Dict[str, List[str]]) -> Dict[str, str]:
+        id_map: Dict[str, str] = {"*": "__all__"}
+        identifier = 1
+        for table, columns in schema.items():
+            for column in columns:
+                id_map[f"{table.lower()}.{column.lower()}"] = (
+                    f"__{table.lower()}.{column.lower()}__"
+                )
+                identifier += 1
+
+        for table in schema:
+            id_map[table.lower()] = f"__{table.lower()}__"
+            identifier += 1
+
+        return id_map
+
+
+def get_schema(db_path: str) -> Dict[str, List[str]]:
+    """Load table → column mapping from a Spider SQLite database."""
+
+    schema: Dict[str, List[str]] = {}
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [str(result[0].lower()) for result in cursor.fetchall()]
+
+        for table in tables:
+            cursor.execute(f"PRAGMA table_info({table})")
+            schema[table] = [str(col[1].lower()) for col in cursor.fetchall()]
+    finally:
+        conn.close()
+
+    return schema
+
+
+def tokenize(sql: str) -> List[str]:
+    sql = str(sql).replace("'", '"')
+    quote_indices = [idx for idx, char in enumerate(sql) if char == '"']
+    if len(quote_indices) % 2 != 0:
+        raise ValueError("Unbalanced quotes in SQL query")
+
+    preserved_literals: Dict[str, str] = {}
+    for index in range(len(quote_indices) - 1, 0, -2):
+        start = quote_indices[index - 1]
+        end = quote_indices[index]
+        literal = sql[start : end + 1]
+        placeholder = f"__val_{start}_{end}__"
+        sql = sql[:start] + placeholder + sql[end + 1 :]
+        preserved_literals[placeholder] = literal
+
+    tokens = [word.lower() for word in word_tokenize(sql)]
+    for position, token in enumerate(tokens):
+        if token in preserved_literals:
+            tokens[position] = preserved_literals[token]
+
+    equality_indices = [idx for idx, tok in enumerate(tokens) if tok == "="]
+    equality_indices.reverse()
+    for idx in equality_indices:
+        if tokens[idx - 1] in ("!", ">", "<"):
+            tokens = tokens[: idx - 1] + [tokens[idx - 1] + "="] + tokens[idx + 1 :]
+
+    return tokens
+
+
+def scan_alias(tokens: List[str]) -> Dict[str, str]:
+    alias_map: Dict[str, str] = {}
+    as_positions = [idx for idx, tok in enumerate(tokens) if tok == "as"]
+    for idx in as_positions:
+        alias_map[tokens[idx + 1]] = tokens[idx - 1]
+    return alias_map
+
+
+def get_tables_with_alias(schema: Dict[str, List[str]], tokens: List[str]) -> Dict[str, str]:
+    tables = scan_alias(tokens)
+    for name in schema:
+        if name in tables:
+            raise ValueError(f"Alias {name} has the same name as a table")
+        tables[name] = name
+    return tables
+
+
+def parse_col(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: Optional[List[str]] = None,
+) -> Tuple[int, str]:
+    token = tokens[start_idx]
+    if token == "*":
+        return start_idx + 1, schema.idMap[token]
+
+    if "." in token:
+        alias, column = token.split(".", 1)
+        key = f"{tables_with_alias[alias]}.{column}"
+        return start_idx + 1, schema.idMap[key]
+
+    if not default_tables:
+        raise AssertionError("Default tables should not be empty when parsing a column")
+
+    for alias in default_tables:
+        table = tables_with_alias[alias]
+        if token in schema.schema[table]:
+            key = f"{table}.{token}"
+            return start_idx + 1, schema.idMap[key]
+
+    raise AssertionError(f"Error parsing column token: {token}")
+
+
+def parse_col_unit(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: Optional[List[str]] = None,
+) -> Tuple[int, Tuple[int, str, bool]]:
+    idx = start_idx
+    length = len(tokens)
+    is_block = False
+    is_distinct = False
+
+    if tokens[idx] == "(":
+        is_block = True
+        idx += 1
+
+    if tokens[idx] in AGG_OPS:
+        agg_id = AGG_OPS.index(tokens[idx])
+        idx += 1
+        assert idx < length and tokens[idx] == "("
+        idx += 1
+        if tokens[idx] == "distinct":
+            idx += 1
+            is_distinct = True
+        idx, col_id = parse_col(tokens, idx, tables_with_alias, schema, default_tables)
+        assert idx < length and tokens[idx] == ")"
+        idx += 1
+        return idx, (agg_id, col_id, is_distinct)
+
+    if tokens[idx] == "distinct":
+        idx += 1
+        is_distinct = True
+
+    agg_id = AGG_OPS.index("none")
+    idx, col_id = parse_col(tokens, idx, tables_with_alias, schema, default_tables)
+
+    if is_block:
+        assert tokens[idx] == ")"
+        idx += 1
+
+    return idx, (agg_id, col_id, is_distinct)
+
+
+def has_agg(unit: Tuple[int, Any, Any]) -> bool:
+    return unit[0] != AGG_OPS.index("none")
+
+
+def parse_val_unit(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: Optional[List[str]] = None,
+) -> Tuple[int, Tuple[int, Tuple[int, str, bool], Optional[Tuple[int, str, bool]]]]:
+    idx = start_idx
+    length = len(tokens)
+    is_block = False
+
+    if tokens[idx] == "(":
+        is_block = True
+        idx += 1
+
+    idx, col_unit1 = parse_col_unit(tokens, idx, tables_with_alias, schema, default_tables)
+    unit_op = UNIT_OPS.index("none")
+    col_unit2: Optional[Tuple[int, str, bool]] = None
+
+    if idx < length and tokens[idx] in UNIT_OPS:
+        unit_op = UNIT_OPS.index(tokens[idx])
+        idx += 1
+        idx, col_unit2 = parse_col_unit(tokens, idx, tables_with_alias, schema, default_tables)
+
+    if is_block:
+        assert tokens[idx] == ")"
+        idx += 1
+
+    return idx, (unit_op, col_unit1, col_unit2)
+
+
+def parse_table_unit(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+) -> Tuple[int, str, str]:
+    idx = start_idx
+    key = tables_with_alias[tokens[idx]]
+
+    if idx + 1 < len(tokens) and tokens[idx + 1] == "as":
+        idx += 3
+    else:
+        idx += 1
+
+    return idx, schema.idMap[key], key
+
+
+def parse_value(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: Optional[List[str]] = None,
+) -> Tuple[int, Any]:
+    idx = start_idx
+    length = len(tokens)
+    is_block = False
+
+    if tokens[idx] == "(":
+        is_block = True
+        idx += 1
+
+    if tokens[idx] == "select":
+        idx, val = parse_sql(tokens, idx, tables_with_alias, schema)
+    elif '"' in tokens[idx]:
+        val = tokens[idx]
+        idx += 1
+    else:
+        try:
+            val = float(tokens[idx])
+            idx += 1
+        except ValueError:
+            end_idx = idx
+            while (
+                end_idx < length
+                and tokens[end_idx] not in {",", ")", "and"}
+                and tokens[end_idx] not in CLAUSE_KEYWORDS
+                and tokens[end_idx] not in JOIN_KEYWORDS
+            ):
+                end_idx += 1
+
+            idx, val = parse_col_unit(
+                tokens[start_idx:end_idx],
+                0,
+                tables_with_alias,
+                schema,
+                default_tables,
+            )
+            idx = end_idx
+
+    if is_block:
+        assert tokens[idx] == ")"
+        idx += 1
+
+    return idx, val
+
+
+def parse_condition(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: Optional[List[str]] = None,
+) -> Tuple[int, List[Any]]:
+    idx = start_idx
+    length = len(tokens)
+    conditions: List[Any] = []
+
+    while idx < length:
+        idx, val_unit = parse_val_unit(tokens, idx, tables_with_alias, schema, default_tables)
+        not_op = False
+        if tokens[idx] == "not":
+            not_op = True
+            idx += 1
+
+        assert idx < length and tokens[idx] in WHERE_OPS, (
+            f"Error condition: idx={idx}, token={tokens[idx]}"
+        )
+        op_id = WHERE_OPS.index(tokens[idx])
+        idx += 1
+        val1 = val2 = None
+        if op_id == WHERE_OPS.index("between"):
+            idx, val1 = parse_value(tokens, idx, tables_with_alias, schema, default_tables)
+            assert tokens[idx] == "and"
+            idx += 1
+            idx, val2 = parse_value(tokens, idx, tables_with_alias, schema, default_tables)
+        else:
+            idx, val1 = parse_value(tokens, idx, tables_with_alias, schema, default_tables)
+            val2 = None
+
+        conditions.append((not_op, op_id, val_unit, val1, val2))
+
+        if idx < length and (
+            tokens[idx] in CLAUSE_KEYWORDS
+            or tokens[idx] in (")", ";")
+            or tokens[idx] in JOIN_KEYWORDS
+        ):
+            break
+
+        if idx < length and tokens[idx] in COND_OPS:
+            conditions.append(tokens[idx])
+            idx += 1
+
+    return idx, conditions
+
+
+def parse_select(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: Optional[List[str]] = None,
+) -> Tuple[int, Tuple[bool, List[Tuple[int, Tuple[int, Tuple[int, str, bool], Optional[Tuple[int, str, bool]]]]]]]:
+    idx = start_idx
+    length = len(tokens)
+
+    assert tokens[idx] == "select"
+    idx += 1
+    is_distinct = False
+    if idx < length and tokens[idx] == "distinct":
+        idx += 1
+        is_distinct = True
+
+    val_units: List[Tuple[int, Tuple[int, Tuple[int, str, bool], Optional[Tuple[int, str, bool]]]]] = []
+
+    while idx < length and tokens[idx] not in CLAUSE_KEYWORDS:
+        agg_id = AGG_OPS.index("none")
+        if tokens[idx] in AGG_OPS:
+            agg_id = AGG_OPS.index(tokens[idx])
+            idx += 1
+        idx, val_unit = parse_val_unit(tokens, idx, tables_with_alias, schema, default_tables)
+        val_units.append((agg_id, val_unit))
+        if idx < length and tokens[idx] == ",":
+            idx += 1
+
+    return idx, (is_distinct, val_units)
+
+
+def parse_from(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+) -> Tuple[int, List[Tuple[str, Any]], List[Any], List[str]]:
+    assert "from" in tokens[start_idx:]
+
+    length = len(tokens)
+    idx = tokens.index("from", start_idx) + 1
+    default_tables: List[str] = []
+    table_units: List[Tuple[str, Any]] = []
+    conditions: List[Any] = []
+
+    while idx < length:
+        is_block = False
+        if tokens[idx] == "(":
+            is_block = True
+            idx += 1
+
+        if tokens[idx] == "select":
+            idx, sql = parse_sql(tokens, idx, tables_with_alias, schema)
+            table_units.append((TABLE_TYPE["sql"], sql))
+        else:
+            if idx < length and tokens[idx] == "join":
+                idx += 1
+            idx, table_unit, table_name = parse_table_unit(tokens, idx, tables_with_alias, schema)
+            table_units.append((TABLE_TYPE["table_unit"], table_unit))
+            default_tables.append(table_name)
+        if idx < length and tokens[idx] == "on":
+            idx += 1
+            idx, this_conds = parse_condition(tokens, idx, tables_with_alias, schema, default_tables)
+            if conditions:
+                conditions.append("and")
+            conditions.extend(this_conds)
+
+        if is_block:
+            assert tokens[idx] == ")"
+            idx += 1
+        if idx < length and (tokens[idx] in CLAUSE_KEYWORDS or tokens[idx] in (")", ";")):
+            break
+
+    return idx, table_units, conditions, default_tables
+
+
+def parse_where(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: List[str],
+) -> Tuple[int, List[Any]]:
+    idx = start_idx
+    length = len(tokens)
+
+    if idx >= length or tokens[idx] != "where":
+        return idx, []
+
+    idx += 1
+    idx, conditions = parse_condition(tokens, idx, tables_with_alias, schema, default_tables)
+    return idx, conditions
+
+
+def parse_group_by(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: List[str],
+) -> Tuple[int, List[Tuple[int, str]]]:
+    idx = start_idx
+    length = len(tokens)
+    columns: List[Tuple[int, str]] = []
+
+    if idx >= length or tokens[idx] != "group":
+        return idx, columns
+
+    idx += 1
+    assert tokens[idx] == "by"
+    idx += 1
+
+    while idx < length and tokens[idx] not in CLAUSE_KEYWORDS and tokens[idx] not in (")", ";"):
+        idx, col_unit = parse_col_unit(tokens, idx, tables_with_alias, schema, default_tables)
+        columns.append(col_unit)
+        if idx < length and tokens[idx] == ",":
+            idx += 1
+        else:
+            break
+
+    return idx, columns
+
+
+def parse_order_by(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: List[str],
+) -> Tuple[int, Tuple[str, List[Tuple[int, Tuple[int, str, bool], Optional[Tuple[int, str, bool]]]]]]:
+    idx = start_idx
+    length = len(tokens)
+    val_units: List[Tuple[int, Tuple[int, str, bool], Optional[Tuple[int, str, bool]]]] = []
+    order_type = "asc"
+
+    if idx >= length or tokens[idx] != "order":
+        return idx, val_units
+
+    idx += 1
+    assert tokens[idx] == "by"
+    idx += 1
+
+    while idx < length and tokens[idx] not in CLAUSE_KEYWORDS and tokens[idx] not in (")", ";"):
+        idx, val_unit = parse_val_unit(tokens, idx, tables_with_alias, schema, default_tables)
+        val_units.append(val_unit)
+        if idx < length and tokens[idx] in ORDER_OPS:
+            order_type = tokens[idx]
+            idx += 1
+        if idx < length and tokens[idx] == ",":
+            idx += 1
+        else:
+            break
+
+    return idx, (order_type, val_units)
+
+
+def parse_having(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+    default_tables: List[str],
+) -> Tuple[int, List[Any]]:
+    idx = start_idx
+    length = len(tokens)
+
+    if idx >= length or tokens[idx] != "having":
+        return idx, []
+
+    idx += 1
+    idx, conditions = parse_condition(tokens, idx, tables_with_alias, schema, default_tables)
+    return idx, conditions
+
+
+def parse_limit(tokens: List[str], start_idx: int) -> Tuple[int, Optional[int]]:
+    idx = start_idx
+    length = len(tokens)
+
+    if idx < length and tokens[idx] == "limit":
+        idx += 2
+        if not isinstance(tokens[idx - 1], int):
+            return idx, 1
+        return idx, int(tokens[idx - 1])
+
+    return idx, None
+
+
+def skip_semicolon(tokens: List[str], start_idx: int) -> int:
+    idx = start_idx
+    while idx < len(tokens) and tokens[idx] == ";":
+        idx += 1
+    return idx
+
+
+def parse_sql(
+    tokens: List[str],
+    start_idx: int,
+    tables_with_alias: Dict[str, str],
+    schema: Schema,
+) -> Tuple[int, Dict[str, Any]]:
+    is_block = False
+    length = len(tokens)
+    idx = start_idx
+
+    sql: Dict[str, Any] = {}
+    if tokens[idx] == "(":
+        is_block = True
+        idx += 1
+
+    from_end_idx, table_units, conditions, default_tables = parse_from(
+        tokens, start_idx, tables_with_alias, schema
+    )
+    sql["from"] = {"table_units": table_units, "conds": conditions}
+
+    _, select_units = parse_select(tokens, idx, tables_with_alias, schema, default_tables)
+    idx = from_end_idx
+    sql["select"] = select_units
+
+    idx, where_conds = parse_where(tokens, idx, tables_with_alias, schema, default_tables)
+    sql["where"] = where_conds
+
+    idx, group_units = parse_group_by(tokens, idx, tables_with_alias, schema, default_tables)
+    sql["groupBy"] = group_units
+
+    idx, having_conds = parse_having(tokens, idx, tables_with_alias, schema, default_tables)
+    sql["having"] = having_conds
+
+    idx, order_units = parse_order_by(tokens, idx, tables_with_alias, schema, default_tables)
+    sql["orderBy"] = order_units
+
+    idx, limit_val = parse_limit(tokens, idx)
+    sql["limit"] = limit_val
+
+    idx = skip_semicolon(tokens, idx)
+    if is_block:
+        assert tokens[idx] == ")"
+        idx += 1
+    idx = skip_semicolon(tokens, idx)
+
+    for op in SQL_OPS:
+        sql[op] = None
+    if idx < length and tokens[idx] in SQL_OPS:
+        sql_op = tokens[idx]
+        idx += 1
+        idx, nested_sql = parse_sql(tokens, idx, tables_with_alias, schema)
+        sql[sql_op] = nested_sql
+
+    return idx, sql
+
+
+def get_sql(schema: Schema, query: str) -> Dict[str, Any]:
+    tokens = tokenize(query)
+    tables_with_alias = get_tables_with_alias(schema.schema, tokens)
+    _, sql = parse_sql(tokens, 0, tables_with_alias, schema)
+    return sql
+
+
+def get_nestedSQL(sql: Dict[str, Any]) -> List[Dict[str, Any]]:
+    nested: List[Dict[str, Any]] = []
+    for cond_unit in sql["from"]["conds"][::2] + sql["where"][::2] + sql["having"][::2]:
+        if isinstance(cond_unit[3], dict):
+            nested.append(cond_unit[3])
+        if isinstance(cond_unit[4], dict):
+            nested.append(cond_unit[4])
+    if sql["intersect"] is not None:
+        nested.append(sql["intersect"])
+    if sql["except"] is not None:
+        nested.append(sql["except"])
+    if sql["union"] is not None:
+        nested.append(sql["union"])
+    return nested
+
+
+def count_agg(units: List[Any]) -> int:
+    return len([unit for unit in units if has_agg(unit)])
+
+
+def count_component1(sql: Dict[str, Any]) -> int:
+    count = 0
+    if sql["where"]:
+        count += 1
+    if sql["groupBy"]:
+        count += 1
+    if sql["orderBy"]:
+        count += 1
+    if sql["limit"] is not None:
+        count += 1
+    if sql["from"]["table_units"]:
+        count += len(sql["from"]["table_units"]) - 1
+
+    ao_tokens = sql["from"]["conds"][1::2] + sql["where"][1::2] + sql["having"][1::2]
+    count += len([token for token in ao_tokens if token == "or"])
+
+    cond_units = sql["from"]["conds"][::2] + sql["where"][::2] + sql["having"][::2]
+    count += len([cond for cond in cond_units if cond[1] == WHERE_OPS.index("like")])
+
+    return count
+
+
+def count_component2(sql: Dict[str, Any]) -> int:
+    return len(get_nestedSQL(sql))
+
+
+def count_others(sql: Dict[str, Any]) -> int:
+    count = 0
+    agg_count = count_agg(sql["select"][1])
+    agg_count += count_agg(sql["where"][::2])
+    agg_count += count_agg(sql["groupBy"])
+    if sql["orderBy"]:
+        agg_count += count_agg(
+            [unit[1] for unit in sql["orderBy"][1] if unit[1]]
+            + [unit[2] for unit in sql["orderBy"][1] if unit[2]]
+        )
+    agg_count += count_agg(sql["having"])
+    if agg_count > 1:
+        count += 1
+
+    if len(sql["select"][1]) > 1:
+        count += 1
+    if len(sql["where"]) > 1:
+        count += 1
+    if len(sql["groupBy"]) > 1:
+        count += 1
+
+    return count
+
+
+def compute_spider_difficulty(sql_dict: Dict[str, Any]) -> str:
+    """Compute Spider difficulty category from parsed SQL dictionary."""
+
+    comp1 = count_component1(sql_dict)
+    comp2 = count_component2(sql_dict)
+    others = count_others(sql_dict)
+
+    if comp1 <= 1 and others == 0 and comp2 == 0:
+        return "easy"
+    if ((others <= 2 and comp1 <= 1 and comp2 == 0) or (comp1 <= 2 and others < 2 and comp2 == 0)):
+        return "medium"
+    if (
+        (others > 2 and comp1 <= 2 and comp2 == 0)
+        or (2 < comp1 <= 3 and others <= 2 and comp2 == 0)
+        or (comp1 <= 1 and others == 0 and comp2 <= 1)
+    ):
+        return "hard"
+    return "extra"
+
 class RoleSQLGenerator:
     """Generate role-based SQL queries dataset based on access control."""
+
+    _latest_baseline: List[Dict[str, Any]]
     
     def __init__(self, project_root: Path, output_dir: str = None):
         """
@@ -40,9 +750,13 @@ class RoleSQLGenerator:
             'train_dev': project_root / 'data' / 'spider' / 'tables.json',
             'test': project_root / 'data' / 'spider' / 'test_tables.json'
         }
-        
-        # Cache for table information
-        self._tables_cache = {}
+
+        # Cache for table information, schema, instructions, and difficulties
+        self._tables_cache: Dict[str, Dict[str, Any]] = {}
+        self._schema_cache: Dict[str, Schema] = {}
+        self._difficulty_cache: Dict[Tuple[str, str], Optional[str]] = {}
+        self._instruction_cache: Dict[str, str] = {}
+        self._latest_baseline = []
         
     def extract_tables_from_query(self, query: str) -> Set[str]:
         """
@@ -349,6 +1063,116 @@ class RoleSQLGenerator:
         except Exception as e:
             logger.error(f"Error generating instruction for {db_id}: {str(e)}")
             return f"{db_id} database schema information."
+
+    def _resolve_sqlite_path(self, db_id: str, data_source: str) -> Optional[Path]:
+        """Resolve the path to the Spider SQLite database for a given db_id."""
+        base_dir = self.project_root / 'data' / 'spider'
+        candidates: List[Path] = []
+
+        if data_source == 'test':
+            candidates.append(base_dir / 'test_database' / db_id / f"{db_id}.sqlite")
+            candidates.append(base_dir / 'database' / db_id / f"{db_id}.sqlite")
+        else:
+            candidates.append(base_dir / 'database' / db_id / f"{db_id}.sqlite")
+            candidates.append(base_dir / 'test_database' / db_id / f"{db_id}.sqlite")
+
+        for path in candidates:
+            if path.exists():
+                return path
+
+        logger.debug("Could not locate SQLite file for %s (candidates=%s)", db_id, candidates)
+        return None
+
+    def _load_schema(self, db_id: str, data_source: str) -> Optional[Schema]:
+        """Load and cache the parsed schema for a Spider database."""
+        if db_id in self._schema_cache:
+            return self._schema_cache[db_id]
+
+        db_path = self._resolve_sqlite_path(db_id, data_source)
+        if db_path is None:
+            logger.warning("SQLite database not found for %s (source=%s)", db_id, data_source)
+            return None
+
+        try:
+            schema = Schema(get_schema(str(db_path)))
+            self._schema_cache[db_id] = schema
+            return schema
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning("Failed to load schema for %s: %s", db_id, exc)
+            return None
+
+    def _compute_sql_difficulty(self, db_id: str, sql_query: str, data_source: str) -> Optional[str]:
+        """Compute Spider difficulty level for a SQL query."""
+        normalized_sql = " ".join(sql_query.split())
+        cache_key = (db_id, normalized_sql)
+        if cache_key in self._difficulty_cache:
+            return self._difficulty_cache[cache_key]
+
+        schema = self._load_schema(db_id, data_source)
+        if schema is None:
+            self._difficulty_cache[cache_key] = None
+            return None
+
+        try:
+            parsed_sql = get_sql(schema, normalized_sql)
+            difficulty = compute_spider_difficulty(parsed_sql)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.debug("Could not parse SQL for difficulty (db=%s): %s", db_id, exc)
+            difficulty = None
+
+        self._difficulty_cache[cache_key] = difficulty
+        return difficulty
+
+    def _prepare_example_metadata(
+        self,
+        example: Dict[str, Any],
+        instruction_template: str,
+        table_info: Dict[str, Dict[str, Any]],
+        data_source: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Prepare shared metadata fields for role and baseline outputs."""
+
+        db_id = example.get('db_id')
+        if not db_id:
+            logger.debug("Skipping record without db_id: %s", example)
+            return None
+
+        question = example.get('question') or example.get('input')
+        sql_query = example.get('query') or example.get('output')
+        if question is None or not sql_query:
+            logger.debug(
+                "Skipping record for %s due to missing question or SQL (question=%s, sql_present=%s)",
+                db_id,
+                question is not None,
+                bool(sql_query),
+            )
+            return None
+
+        instruction = example.get('instruction')
+        if not instruction:
+            if db_id in self._instruction_cache:
+                instruction = self._instruction_cache[db_id]
+            elif db_id in table_info:
+                db_instruction = self.generate_database_instruction(db_id, table_info[db_id])
+                instruction = instruction_template.format(db_instruction)
+                self._instruction_cache[db_id] = instruction
+            else:
+                logger.warning("No table info found for database: %s", db_id)
+                instruction = instruction_template.format(f"{db_id} database")
+                self._instruction_cache[db_id] = instruction
+        else:
+            self._instruction_cache.setdefault(db_id, instruction)
+
+        input_text = example.get('input') or question
+        difficulty = self._compute_sql_difficulty(db_id, sql_query, data_source) or "unknown"
+
+        return {
+            'db_id': db_id,
+            'instruction': instruction,
+            'input': input_text,
+            'gold_sql': sql_query,
+            'difficulty': difficulty,
+        }
             
     def check_query_permission(self, query_tables: Set[str], role_tables: str) -> bool:
         """
@@ -401,7 +1225,7 @@ class RoleSQLGenerator:
 
         Returns:
             A list of dictionaries. Each entry contains ``db_id``, ``instruction``,
-            ``role``, ``tables``, ``input``, and ``output``.
+            ``role``, ``tables``, ``input``, ``output``, ``gold_sql``, and ``difficulty``.
         """
 
         role_assignments = self.load_role_assignments(role_file_path)
@@ -418,6 +1242,8 @@ class RoleSQLGenerator:
 
         table_info = self.load_table_info(data_source)
 
+        baseline_entries: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+
         try:
             configs_path = self.project_root / 'configs'
             if str(configs_path) not in sys.path:
@@ -433,7 +1259,7 @@ class RoleSQLGenerator:
 
         instruction_template = instruction_prompt or INSTRUCTION_PROMPT
 
-        dataset: List[Dict[str, str]] = []
+        dataset: List[Dict[str, Any]] = []
         processed_dbs: Set[str] = set()
         skipped_dbs: Set[str] = set()
         allowed_count = 0
@@ -449,30 +1275,23 @@ class RoleSQLGenerator:
                 skipped_dbs.add(db_id)
                 continue
 
-            question = example.get('question') or example.get('input')
-            sql_query = example.get('query') or example.get('output')
-
-            if question is None or not sql_query:
-                logger.debug(
-                    "Skipping record for %s due to missing question or SQL (question=%s, sql_present=%s)",
-                    db_id,
-                    question is not None,
-                    bool(sql_query),
-                )
+            base_entry = self._prepare_example_metadata(example, instruction_template, table_info, data_source)
+            if base_entry is None:
                 continue
 
+            sql_query = base_entry['gold_sql']
             processed_dbs.add(db_id)
 
-            instruction = example.get('instruction')
-            if not instruction:
-                if db_id in table_info:
-                    db_instruction = self.generate_database_instruction(db_id, table_info[db_id])
-                    instruction = instruction_template.format(db_instruction)
-                else:
-                    logger.warning("No table info found for database: %s", db_id)
-                    instruction = instruction_template.format(f"{db_id} database")
-
-            input_text = example.get('input') or question
+            baseline_key = (base_entry['db_id'], base_entry['input'], base_entry['gold_sql'])
+            if baseline_key not in baseline_entries:
+                baseline_entries[baseline_key] = {
+                    'db_id': base_entry['db_id'],
+                    'instruction': base_entry['instruction'],
+                    'input': base_entry['input'],
+                    'output': base_entry['gold_sql'],
+                    'gold_sql': base_entry['gold_sql'],
+                    'difficulty': base_entry['difficulty'],
+                }
 
             query_tables = self.extract_tables_from_query(sql_query)
 
@@ -493,12 +1312,14 @@ class RoleSQLGenerator:
                     denied_count += 1
 
                 entry = {
-                    'db_id': db_id,
-                    'instruction': instruction,
+                    'db_id': base_entry['db_id'],
+                    'instruction': base_entry['instruction'],
                     'role': role_name,
                     'tables': role_tables,
-                    'input': input_text,
+                    'input': base_entry['input'],
                     'output': output_sql,
+                    'gold_sql': base_entry['gold_sql'],
+                    'difficulty': base_entry['difficulty'],
                 }
 
                 dataset.append(entry)
@@ -513,7 +1334,77 @@ class RoleSQLGenerator:
         if skipped_dbs:
             logger.debug("Skipped databases: %s", sorted(skipped_dbs))
 
+        self._latest_baseline = list(baseline_entries.values())
+
         return dataset
+
+    def generate_baseline_dataset(
+        self,
+        data_source: str = 'train',
+        *,
+        spider_data: Optional[List[Dict[str, Any]]] = None,
+        instruction_prompt: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Generate Spider dataset without role conditioning using minimal fields.
+
+        Returns:
+            List[Dict[str, Any]]: Entries include ``db_id``, ``instruction``,
+            ``input``, ``output``, and ``difficulty``.
+        """
+
+        if spider_data is None:
+            spider_data = self.load_spider_data(data_source)
+        if not spider_data:
+            logger.error("Spider source data is empty; aborting baseline generation.")
+            return []
+
+        table_info = self.load_table_info(data_source)
+
+        try:
+            configs_path = self.project_root / 'configs'
+            if str(configs_path) not in sys.path:
+                sys.path.insert(0, str(configs_path))
+            from prompts import INSTRUCTION_PROMPT  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning("Could not import INSTRUCTION_PROMPT from configs; using default template.")
+            INSTRUCTION_PROMPT = (
+                "I want you to act as a SQL terminal in front of an example database, you need only to "
+                "return the sql command to me.Below is an instruction that describes a task, Write a response "
+                "that appropriately completes the request.\n##Instruction:\n{}\n"
+            )
+
+        instruction_template = instruction_prompt or INSTRUCTION_PROMPT
+
+        baseline: List[Dict[str, Any]] = []
+        seen_keys: Set[Tuple[str, str, str]] = set()
+
+        for example in spider_data:
+            base_entry = self._prepare_example_metadata(example, instruction_template, table_info, data_source)
+            if base_entry is None:
+                continue
+
+            key = (base_entry['db_id'], base_entry['input'], base_entry['gold_sql'])
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            baseline.append(
+                {
+                    'db_id': base_entry['db_id'],
+                    'instruction': base_entry['instruction'],
+                    'input': base_entry['input'],
+                    'output': base_entry['gold_sql'],
+                    'difficulty': base_entry['difficulty'],
+                }
+            )
+
+        logger.info(
+            "Baseline dataset generation completed for %s data: total examples %s (unique by db/input/sql)",
+            data_source,
+            len(baseline),
+        )
+
+        return baseline
         
     def generate_all_datasets(self, role_file_path: str = None, timestamp: str = None) -> Dict[str, Dict[str, Any]]:
         """
@@ -673,12 +1564,12 @@ if __name__ == '__main__':
     for data_source, result in results.items():
         print(f"\n{data_source.upper()} Dataset:")
         if 'error' in result:
-            print(f"  ❌ Error: {result['error']}")
+            print(f"   Error: {result['error']}")
         else:
-            print(f"  ✅ Examples: {result['total_examples']}")
-            print(f"  📊 Databases: {result['databases']}")
-            print(f"  👥 Roles: {result['roles']}")
-            print(f"  🚫 Denied: {result['denied_queries']} ({result['denial_rate']:.1f}%)")
-            print(f"  📄 Output: {result['output_path']}")
+            print(f"   Examples: {result['total_examples']}")
+            print(f"   Databases: {result['databases']}")
+            print(f"   Roles: {result['roles']}")
+            print(f"   Denied: {result['denied_queries']} ({result['denial_rate']:.1f}%)")
+            print(f"   Output: {result['output_path']}")
     
     print("\n" + "="*50)

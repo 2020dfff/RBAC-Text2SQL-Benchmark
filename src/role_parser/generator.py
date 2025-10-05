@@ -53,7 +53,7 @@ class RoleGenerator:
         response = self.oracle.query(
             prompt_sys=SYSTEM_PROMPT,
             prompt_user=USER_PROMPT_TEMPLATE.format(schema_content=schema_content),
-            temp=0.7,
+            temp=0.0,
             top_p=0.9
         )
         

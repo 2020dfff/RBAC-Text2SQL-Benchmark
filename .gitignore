@@ -82,7 +82,7 @@ Bird/
 db_migration/
 
 # experiments code ignore for now
-experiments/
+# experiments/
 
 # Large data files
 *.csv

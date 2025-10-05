@@ -526,7 +526,7 @@ def render_dataset(
                     )
 
         ax.set_yticks(y_ticks)
-        ax.set_yticklabels(y_labels, fontsize=9)
+        ax.set_yticklabels(y_labels, fontsize=12)
         ax.set_xlim(-0.05, 1.05)
         ax.set_ylim(-0.6, len(db_chunk) - 1 + 0.6)
         tick_positions = np.linspace(0.0, 1.0, 5)
@@ -535,15 +535,18 @@ def render_dataset(
         else:
             tick_labels = [f"{min_sim:.2f}" for _ in tick_positions]
         ax.set_xticks(tick_positions)
-        ax.set_xticklabels(tick_labels)
+        ax.set_xticklabels(tick_labels, fontsize=11)
         ax.grid(axis="x", linestyle=":", linewidth=0.5, alpha=0.45)
-        ax.set_ylabel("Database")
+        ax.set_ylabel("Database", fontsize=12)
+
+        ax.tick_params(axis="y", labelsize=11)
+        ax.tick_params(axis="x", labelsize=11)
 
     for ax in axes:
         ax.label_outer()
 
     if show_xlabel:
-        axes[-1].set_xlabel("Semantic similarity (rescaled to observed range)")
+        axes[-1].set_xlabel("Semantic similarity (rescaled to observed range)", fontsize=12)
     else:
         axes[-1].set_xlabel("")
         axes[-1].set_xticklabels([])
@@ -551,7 +554,7 @@ def render_dataset(
     top_margin = min(0.9, max(0.55, title_y - 0.04))
     container.suptitle(
         f"{dataset_name} roles: permission breadth vs. schema alignment",
-        fontsize=13,
+        fontsize=15,
         y=title_y,
     )
     left_margin = min(0.4, max(0.22, 0.18 + max_label_chars * 0.006))
@@ -564,8 +567,8 @@ def render_dataset(
         pad=0.015,
         location="right",
     )
-    cbar.set_label("Role/schema similarity (cosine via BGE embeddings)")
-    cbar.ax.tick_params(labelleft=False, labelright=False)
+    cbar.set_label("Role/schema similarity (cosine via BGE embeddings)", fontsize=12)
+    cbar.ax.tick_params(labelleft=False, labelright=False, labelsize=10)
 
 
 def plot_roles(
@@ -605,7 +608,7 @@ def plot_roles_multi(
         subfig = fig.add_subfigure(gs_main[0, idx])
         render_dataset(subfig, display_name, data, show_xlabel=True, title_y=0.9, right_margin=0.88)
 
-    fig.suptitle("Role semantic alignment overview", y=0.97, fontsize=15)
+    fig.suptitle("Role semantic alignment overview", y=0.97, fontsize=17)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
