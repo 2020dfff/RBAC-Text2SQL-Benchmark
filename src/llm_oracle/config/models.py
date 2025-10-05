@@ -87,3 +87,8 @@ MODELS_WITHOUT_TOP_P = [
     MODEL_GPT_o3, MODEL_GPT_o3_MINI,
     MODEL_GPT_5, MODEL_GPT_5_MINI
 ]
+
+# Models that require the default temperature value (API rejects overrides)
+MODELS_WITH_FIXED_TEMPERATURE = [
+    MODEL_GPT_5, MODEL_GPT_5_MINI
+]
