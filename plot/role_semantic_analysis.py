@@ -459,8 +459,8 @@ def render_dataset(
     data: Dict[str, object],
     *,
     show_xlabel: bool,
-    title_y: float = 0.96,
-    right_margin: float = 0.9,
+    title_y: float = 0.97,
+    right_margin: float | None = None,
 ) -> None:
     random.seed(13)
     panels: List[List[str]] = data["panels"]
@@ -502,11 +502,11 @@ def render_dataset(
                     ax.scatter(
                         jittered_x,
                         jittered_y,
-                        s=48.0,
+                        s=200.0,  # 从48.0增加到200.0
                         c="#d62728",
                         alpha=0.9,
                         edgecolors="#8c1c15",
-                        linewidths=0.4,
+                        linewidths=0.5,  # 稍微增加边框宽度
                         marker="^",
                         zorder=3,
                     )
@@ -515,18 +515,18 @@ def render_dataset(
                     ax.scatter(
                         jittered_x,
                         jittered_y,
-                        s=entry["size"],
+                        s=entry["size"] * 3,  # 增大3倍
                         c=[similarity],
                         cmap=cmap,
                         norm=norm,
                         alpha=0.82,
                         edgecolors="#333333",
-                        linewidths=0.35,
+                        linewidths=0.45,  # 稍微增加边框宽度
                         marker="o",
                     )
 
         ax.set_yticks(y_ticks)
-        ax.set_yticklabels(y_labels, fontsize=12)
+        ax.set_yticklabels(y_labels, fontsize=19, weight='bold')
         ax.set_xlim(-0.05, 1.05)
         ax.set_ylim(-0.6, len(db_chunk) - 1 + 0.6)
         tick_positions = np.linspace(0.0, 1.0, 5)
@@ -535,40 +535,46 @@ def render_dataset(
         else:
             tick_labels = [f"{min_sim:.2f}" for _ in tick_positions]
         ax.set_xticks(tick_positions)
-        ax.set_xticklabels(tick_labels, fontsize=11)
+        ax.set_xticklabels(tick_labels, fontsize=16)
         ax.grid(axis="x", linestyle=":", linewidth=0.5, alpha=0.45)
-        ax.set_ylabel("Database", fontsize=12)
+        # ax.set_ylabel("Database", fontsize=18, weight='bold')
 
-        ax.tick_params(axis="y", labelsize=11)
-        ax.tick_params(axis="x", labelsize=11)
+        ax.tick_params(axis="y", labelsize=19)
+        ax.tick_params(axis="x", labelsize=16)
 
     for ax in axes:
         ax.label_outer()
 
     if show_xlabel:
-        axes[-1].set_xlabel("Semantic similarity (rescaled to observed range)", fontsize=12)
+        axes[-1].set_xlabel("Semantic similarity", fontsize=22, weight='bold')
     else:
         axes[-1].set_xlabel("")
         axes[-1].set_xticklabels([])
 
-    top_margin = min(0.9, max(0.55, title_y - 0.04))
+    # Calculate dynamic margins based on label width
+    left_margin = min(0.20, max(0.10, 0.07 + max_label_chars * 0.0075))  # 减小左边距
+    rm = right_margin if right_margin is not None else 0.83  # 减小默认右边距
+    top_margin = 0.84  # 大幅降低 top_margin，为标题留出更多空间（从0.88降到0.84）
+    
     container.suptitle(
-        f"{dataset_name} roles: permission breadth vs. schema alignment",
-        fontsize=15,
+        f"{dataset_name}: roles vs. schema alignment",
+        fontsize=22,
         y=title_y,
+        x=0.5,  # Center the title
+        ha='center',
+        weight='bold',
     )
-    left_margin = min(0.4, max(0.22, 0.18 + max_label_chars * 0.006))
-    container.subplots_adjust(left=left_margin, right=right_margin, top=top_margin, bottom=0.12, hspace=0.08)
+    container.subplots_adjust(left=left_margin, right=rm, top=top_margin, bottom=0.10, hspace=0.13)
 
     cbar = container.colorbar(
         scalar_map,
         ax=axes,
-        fraction=0.055,
+        fraction=0.04,
         pad=0.015,
         location="right",
     )
-    cbar.set_label("Role/schema similarity (cosine via BGE embeddings)", fontsize=12)
-    cbar.ax.tick_params(labelleft=False, labelright=False, labelsize=10)
+    cbar.set_label("Role/schema similarity", fontsize=19, weight='bold')
+    cbar.ax.tick_params(labelleft=False, labelright=False, labelsize=17)
 
 
 def plot_roles(
@@ -578,10 +584,10 @@ def plot_roles(
     dbs_per_panel: int,
 ) -> None:
     data = prepare_plot_data(records, dbs_per_panel)
-    fig = plt.figure(figsize=(7.2, data["layout_height"]))
-    render_dataset(fig, dataset_name, data, show_xlabel=True, title_y=0.96, right_margin=0.9)
+    fig = plt.figure(figsize=(11.0, data["layout_height"] + 1.2))  # 增加高度避免冲突
+    render_dataset(fig, dataset_name, data, show_xlabel=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=200)
+    fig.savefig(output_path, dpi=200, bbox_inches='tight', pad_inches=0.3)
     plt.close(fig)
 
 
@@ -598,19 +604,27 @@ def plot_roles_multi(
         height_contribs.append(data["layout_height"])
 
     max_height = max(height_contribs) if height_contribs else 6.0
-    fig_width = sum(7.2 for _ in prepared)
-    fig_height = max_height
+    fig_width = sum(12.0 for _ in prepared)  # 进一步增加单图宽度
+    fig_height = max_height + 2.5  # 大幅增加高度，为标题留出充足空间
     fig = plt.figure(figsize=(fig_width, fig_height))
 
-    gs_main = fig.add_gridspec(1, len(prepared), width_ratios=[1.0] * len(prepared), wspace=0.35)
+    # 使用固定的宽度单位确保子图间距均匀
+    gs_main = fig.add_gridspec(1, len(prepared), wspace=0.60)  # 进一步增加间距
 
     for idx, (display_name, data) in enumerate(prepared):
         subfig = fig.add_subfigure(gs_main[0, idx])
-        render_dataset(subfig, display_name, data, show_xlabel=True, title_y=0.9, right_margin=0.88)
+        render_dataset(subfig, display_name, data, show_xlabel=True, title_y=0.88, right_margin=0.82)  # 减小右边距为colorbar留空间
 
-    fig.suptitle("Role semantic alignment overview", y=0.97, fontsize=17)
+    fig.suptitle(
+        "Roles vs. schema alignment overview",
+        y=0.99,  # 提高总标题位置，避免与子图标题重叠
+        fontsize=24,
+        x=0.5,
+        ha='center',
+        weight='bold',
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=200)
+    fig.savefig(output_path, dpi=200, bbox_inches='tight', pad_inches=0.35)
     plt.close(fig)
 
 
