@@ -52,7 +52,7 @@ class BirdRoleSQLGenerator(RoleSQLGenerator):
         
         # Override data source mapping for Bird dataset
         self.data_sources = {
-            'dev': self.project_root / 'outputs' / 'bird_dev.json'
+            'dev': self.project_root / 'outputs' / 'bird_dev_data.json'
         }
         
         # Bird dataset doesn't use tables.json, we'll load from detailed schema files
@@ -430,7 +430,7 @@ class BirdRoleSQLGenerator(RoleSQLGenerator):
                 
             processed_dbs.add(db_id)
             
-            # Use the instruction from bird_dev.json directly (it already contains detailed schema)
+            # Use the instruction from bird_dev_data.json directly (it already contains detailed schema)
             base_instruction = example.get('instruction', '')
             
             # Extract tables and derived references from query
@@ -444,10 +444,10 @@ class BirdRoleSQLGenerator(RoleSQLGenerator):
                 # Create dataset entry
                 entry = {
                     'db_id': db_id,
-                    'instruction': base_instruction,  # Use the rich instruction from bird_dev.json
+                    'instruction': base_instruction,  # Use the rich instruction from bird_dev_data.json
                     'role': role_name,
                     'tables': role_tables,
-                    'input': example['input'],  # Already formatted from bird_dev.json
+                    'input': example['input'],  # Already formatted from bird_dev_data.json
                     'output': example['output']
                 }
 
