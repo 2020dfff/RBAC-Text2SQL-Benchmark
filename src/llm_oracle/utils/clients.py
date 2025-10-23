@@ -8,6 +8,7 @@ from azure.ai.inference.models import SystemMessage, UserMessage  # 修复 Syste
 
 from ..config.models import (
     MODELS_WITHOUT_TOP_P,
+    MODELS_WITH_FIXED_TEMPERATURE,
     MAX_COMPLETION_TOKENS,
     DEEP_INFRA_MAP
 )
@@ -39,10 +40,14 @@ def openai_chat_query(
                     {"role": "user", "content": prompt_user},
                 ],
                 "stream": False,
-                "temperature": temp,
                 "max_completion_tokens": max_completion_tokens,
             }
             
+            # Only set temperature if model doesn't have fixed temperature
+            if model not in MODELS_WITH_FIXED_TEMPERATURE:
+                completion_params["temperature"] = temp
+            
+            # Only set top_p if model supports it
             if model not in MODELS_WITHOUT_TOP_P:
                 completion_params["top_p"] = top_p
             
@@ -98,29 +103,57 @@ def google_embed_query(client, model, list_of_text, dimensions, original_key=Fal
     """
     Handle Google embedding query
     """
-    embed_config = types.EmbedContentConfig(output_dimensionality=dimensions)
-    data = client.models.embed_content(
-        model=model,
-        contents=list_of_text,
-        config=embed_config
-    )
-    embds = [e.values for e in data.embeddings]
-    res = {list_of_text[i]: embds[i] for i in range(len(list_of_text))}
-    return res
+    import google.generativeai as genai
+    
+    try:
+        result = genai.embed_content(
+            model=model,
+            content=list_of_text,
+            task_type="retrieval_document",
+        )
+        
+        # Extract embeddings
+        embds = result['embedding'] if isinstance(result, dict) else [e for e in result]
+        
+        # Create result dictionary
+        res = {list_of_text[i]: embds[i] for i in range(len(list_of_text))}
+        return res
+        
+    except Exception as e:
+        return response_failure_embed(list_of_text, model, e)
 
 def google_chat_query(client, model, prompt_sys, prompt_user, temp, top_p, query_key=None) -> dict:
     """
     Handle Google chat completion query
     """
-    gen_config = {"temperature": temp}
+    import google.generativeai as genai
+    
     try:
-        response = client.generate_content(prompt_user, generation_config=gen_config)
+        # Initialize the model
+        gen_model = genai.GenerativeModel(model)
+        
+        # Combine system and user prompts
+        full_prompt = f"{prompt_sys}\n\n{prompt_user}" if prompt_sys else prompt_user
+        
+        # Configure generation parameters
+        gen_config = genai.GenerationConfig(
+            temperature=temp,
+            top_p=top_p,
+        )
+        
+        # Generate response
+        response = gen_model.generate_content(
+            full_prompt,
+            generation_config=gen_config
+        )
+        
         if not query_key:
             query_key = prompt_user
-        res = {"query": query_key, "answer": response.text}
-        return res
+        
+        return {"query": query_key, "answer": response.text}
+        
     except Exception as e:
-        return response_failure(prompt_user, model, e)
+        return response_failure(prompt_user if query_key is None else query_key, model, e)
     
 def azure_chat_query(client, model, prompt_sys, prompt_user, temp, top_p, query_key=None) -> dict:
     """

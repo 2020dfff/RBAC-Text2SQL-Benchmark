@@ -20,6 +20,8 @@ MODEL_EMBED_GEMINI = 'text-embedding-004'
 # google models
 MODEL_GEMINI_15_PRO = 'gemini-1.5-pro'
 MODEL_GEMINI_15_FLASH = 'gemini-1.5-flash'
+MODEL_GEMINI_25_FLASH = 'gemini-2.5-flash'
+MODEL_GEMINI_2_FLASH = 'gemini-2.0-flash-exp'
 MODEL_GEMINI_1_PRO = 'gemini-1.0-pro'
 MODEL_EMBED_GOOGLE = 'text-embedding-004'
 
@@ -61,7 +63,7 @@ openai_model_list = [
 ]
 
 google_model_list = [
-    MODEL_GEMINI_15_PRO, MODEL_GEMINI_15_FLASH,
+    MODEL_GEMINI_15_PRO, MODEL_GEMINI_15_FLASH, MODEL_GEMINI_2_FLASH, MODEL_GEMINI_25_FLASH,
     MODEL_GEMINI_1_PRO, MODEL_EMBED_GEMINI
 ]
 

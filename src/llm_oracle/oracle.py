@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import openai
 from openai import OpenAI
-import google as genai
+import google.generativeai as genai
 from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
 
@@ -46,7 +46,8 @@ class Oracle:
         elif model in deepinfra_model_list:
             self.client = OpenAI(api_key=apikey, base_url=DEEP_INFRA_BASE_URL)
         elif model in google_model_list:
-            self.client = genai.Client(api_key=apikey)
+            genai.configure(api_key=apikey)
+            self.client = genai
         elif model in azure_model_list:
             azure_credential = AzureKeyCredential(apikey)
             self.client = ChatCompletionsClient(endpoint=azure_end_point, credential=azure_credential)
