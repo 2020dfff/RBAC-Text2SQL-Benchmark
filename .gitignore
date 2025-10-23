@@ -75,6 +75,7 @@ data/verify_pg/
 data/*.json
 data/*/*.json
 data/*/*/*.json
+data/selected/
 spider/
 Bird/
 
@@ -118,3 +119,5 @@ htmlcov/
 
 # Ignore output directories
 outputs/
+experiments/output/
+plot/
