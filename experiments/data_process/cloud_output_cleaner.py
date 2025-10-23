@@ -146,7 +146,7 @@ def clean_sql_from_cloud_output(sql_line: str) -> Optional[str]:
     1. Plain SQL: SELECT * FROM table;
     2. Code blocks: ```sql SELECT * FROM table; ```
     3. Inline code: `SELECT * FROM table;`
-    4. Sorry responses: Sorry, I cannot answer this question.
+    4. Sorry responses: Sorry, I cannot answer.
     5. Error messages: Error: API timeout
     
     Args:

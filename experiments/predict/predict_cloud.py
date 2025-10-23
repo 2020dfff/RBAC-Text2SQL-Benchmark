@@ -551,6 +551,14 @@ def cloud_inference_predict(
             
         logger.info(f"Loaded {len(predict_data)} {data_type} samples")
         
+        # Can print first sample's prompt for verification
+        # if predict_data:
+        #     logger.info("="*80)
+        #     logger.info("ACTUAL PROMPT BEING SENT TO API (First Sample):")
+        #     logger.info("="*80)
+        #     logger.info(predict_data[0]["input"])
+        #     logger.info("="*80)
+        
     except Exception as e:
         logger.error(f"Data processing failed: {e}")
         raise
