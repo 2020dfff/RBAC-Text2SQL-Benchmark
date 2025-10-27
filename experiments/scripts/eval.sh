@@ -7,11 +7,11 @@
 #     --fair_comparison
 
 # ==================================== with role =====================================
-# python experiments/eval/evaluation_spider_role.py \
-#     --input experiments/output/pred/pred_gemini-2.5-flash_spider_role.sql \
-#     --role_json data/selected/spider/spider_dev_with_role.json \
-#     --etype exec \
-#     --fair_comparison
+python experiments/eval/evaluation_spider_role.py \
+    --input experiments/output/pred/pred_google-gemma-3-27b-it_spider_role.sql \
+    --role_json data/selected/spider/spider_dev_with_role.json \
+    --etype exec \
+    # --fair_comparison
 
 # ==================================== For Bird evaluation =====================================
 # ==================================== without role =====================================
@@ -21,27 +21,17 @@
 #      --db_root_path "data/Bird/dev_20240627/dev_databases/" \
 #      --diff_json_path "data/selected/gold_data/bird_difficulty.txt" \
 #      --etype exec \
-#      --num_cpus 4 \
+#      --num_cpus 40 \
 #      --meta_time_out 20
 
 # ==================================== with role =====================================
 # python experiments/eval/evaluation_bird_role.py \
-#      --input "experiments/output/pred/pred_qwen2.5-coder-7b-bird-role_cleaned.sql" \
+#      --input "experiments/output/pred/pred_qwen14b-bird-role-finetuned.sql" \
 #      --gold "data/selected/gold_data/bird_gold_role.txt" \
 #      --role_json "data/selected/bird/bird_dev_with_role.json" \
 #      --db_root_path "data/Bird/dev_20240627/dev_databases/" \
 #      --etype exec \
-#      --num_cpus 4 \
-    # --fair_comparison
-
-# ==================================== with role =====================================
-# python experiments/eval/evaluation_bird_role.py \
-#     --input "./experiments/output/pred/pred_claude-sonnet-4-5_bird_role.sql" \
-#     --gold "./dbgpt_hub_sql/data/eval_data/bird_gold_role.txt" \
-#     --role_json "./data/selected/bird/bird_dev_with_role.json" \
-#     --db_root_path "./data/selected/bird/dev/dev_databases/" \
-#     --etype exec \
-#     --num_cpus 40 \
+#      --num_cpus 40 \
 #     --fair_comparison
 
 # ========================= with role and rbac settings ==============================
@@ -71,15 +61,15 @@
 
 # ==================================== with role =====================================
 # PYTHONPATH=. python experiments/scripts/convert_livesqlbench_predictions.py \
-#   --pred-sql experiments/output/pred/pred_claude-sonnet-4-5_livesqlbench_role.sql \
+#   --pred-sql experiments/output/pred/pred_qwen14b-livesqlbench-role-finetuned.sql \
 #   --dataset data/selected/livesqlbench/livesqlbench_dev_with_role.json \
-#   --output experiments/output/pred/pred_claude-sonnet-4-5_livesqlbench_role.jsonl
+#   --output experiments/output/pred/pred_qwen14b-livesqlbench-role-finetuned.jsonl
 
 # PYTHONPATH=. python experiments/eval/evaluation_livesqlbench_role.py \
-#   --predictions experiments/output/pred/pred_claude-sonnet-4-5_livesqlbench_role.jsonl \
+#   --predictions experiments/output/pred/pred_qwen14b-livesqlbench-role-finetuned.jsonl \
 #   --role-dataset data/selected/livesqlbench/livesqlbench_dev_with_role.json \
-#   --base-data data/selected/livesqlbench/dev/livesqlbench_data_sqlite.jsonl \
-#   --gold-sql data/selected/livesqlbench/dev/livesqlbench_sqlite_gt_kg_testcases_0528.jsonl \
-#   --db-root data/selected/livesqlbench/dev \
+#   --base-data data/livesqlbench-base-lite-sqlite/livesqlbench_data_sqlite.jsonl \
+#   --gold-sql data/livesqlbench-base-lite-sqlite/livesqlbench_sqlite_gt_kg_testcases_0528.jsonl \
+#   --db-root data/livesqlbench-base-lite-sqlite \
 #   --output-dir experiments/output/eval_result \
 #   --fair-comparison

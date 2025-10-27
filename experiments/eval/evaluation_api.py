@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
-from experiments.eval import evaluation
+# Avoid circular import - import inside function or use absolute import
+# from experiments.eval import evaluation
 
 
 def start_evaluate(
@@ -25,7 +26,8 @@ def start_evaluate(
     else:
         args = args
 
-    # Execute evaluation
+    # Execute evaluation - import here to avoid circular import
+    from experiments.eval import evaluation
     evaluation.evaluate_api(args)
 
 

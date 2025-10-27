@@ -143,7 +143,7 @@ def evaluate_role_adapted(
     base = os.path.splitext(os.path.basename(predict_file))[0]
     suffix = "_fair_comparison" if fair_comparison else ""
 
-    eval_result_dir = os.path.join("dbgpt_hub_sql", "output", "eval_result")
+    eval_result_dir = os.path.join("experiments", "output", "eval_result")
     os.makedirs(eval_result_dir, exist_ok=True)
 
     incorrect_path = os.path.join(eval_result_dir, f"{base}{suffix}_incorrect.txt")
@@ -546,7 +546,7 @@ def main():
     parser.add_argument("--input", required=True, help="Path to prediction file")
     parser.add_argument("--gold", default="", help="Optional gold SQL file (will be regenerated if missing)")
     parser.add_argument("--role_json", required=True, help="Path to role-based JSON file")
-    parser.add_argument("--db", default="./dbgpt_hub_sql/data/spider/database", help="Database directory")
+    parser.add_argument("--db", default="././data/spider/database", help="Database directory")
     parser.add_argument("--etype", choices=["exec", "all"], default="exec", help="Evaluation type")
     parser.add_argument("--plug_value", action="store_true", help="Plug in gold values when matching")
     parser.add_argument("--keep_distinct", action="store_true", help="Keep DISTINCT keyword during eval")

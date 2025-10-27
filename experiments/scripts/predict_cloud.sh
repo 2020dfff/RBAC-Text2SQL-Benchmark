@@ -29,7 +29,7 @@ load_env_file ".env" || load_env_file "../../.env" || load_env_file "../../../.e
 # Default parameters
 PROVIDER="deepinfra" # anthropic, deepseek, openai, deepinfra, gemini
 MODEL="google/gemma-3-27b-it"  # claude-sonnet-4-5, deepseek-coder, gpt-4-mini, google/gemma-3-4b-it, gemini-2.0-flash-exp
-DATASET="livesqlbench"  # Dataset name (spider, bird, livesqlbench etc.)
+DATASET="spider"  # Dataset name (spider, bird, livesqlbench etc.)
 ROLE="false"  # Role-based evaluation flag
 RBAC="false"  # RBAC (Role-Based Access Control) evaluation flag
 INPUT_FILE=""  # Will be constructed from dataset and role

@@ -968,6 +968,26 @@ def get_dataset(
             max_samples_temp = min(len(dataset), max_samples)
             dataset = dataset.select(range(max_samples_temp))
 
+        # Apply role-based prompt construction if dataset has role information
+        # This ensures training and inference use the same prompt format
+        dataset_columns = dataset.column_names if hasattr(dataset, 'column_names') else list(next(iter(dataset)).keys())
+        if "role" in dataset_columns and "tables" in dataset_columns:
+            logger.info(f"Applying role-based prompt construction for dataset {dataset_attr.dataset_name}")
+            def apply_role_prompt_formatting(example):
+                # Use extract_sql_role_prompt_dataset to construct the full prompt with role info
+                processed = extract_sql_role_prompt_dataset(example)
+                # The function returns {"input": full_prompt_with_role}
+                # We need to split it back to instruction (prompt) and query format expected by training
+                # Since processed["input"] contains the full formatted prompt, we use it as is
+                return {
+                    "instruction": processed["input"],  # Full prompt with role information
+                    "input": "",  # Empty since everything is in instruction now
+                    "output": example.get("output", "")
+                }
+            
+            dataset = dataset.map(apply_role_prompt_formatting)
+            logger.info(f"Role-based prompt construction applied. Sample count: {len(dataset) if not data_args.streaming else 'streaming'}")
+
         for column_name in ["prompt", "query", "response", "history"]:  # align datasets
             if (
                 getattr(dataset_attr, column_name)
