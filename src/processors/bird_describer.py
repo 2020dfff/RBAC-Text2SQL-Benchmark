@@ -319,7 +319,8 @@ def main():
     # Setup logging
     logging.basicConfig(level=logging.INFO)
     
-    project_root = Path('/home/feiy/Role-SQL-benchmark')
+    # Use dynamic project root instead of hardcoded path
+    project_root = Path(__file__).resolve().parent.parent.parent
     describer = BirdDatabaseDescriber(project_root)
     
     # Test with first dev database

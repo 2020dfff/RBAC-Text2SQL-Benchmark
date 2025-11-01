@@ -13,8 +13,14 @@ import sys
 import sqlite3
 import time
 import math
-import random
 from func_timeout import FunctionTimedOut, func_timeout
+
+# Add project root to path
+ROOT_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(ROOT_PATH)
+
+# Import centralized seed management
+from configs.seed import set_global_seed
 
 from livesqlbench_utils import (
     compute_access_control_metrics,
@@ -289,7 +295,7 @@ def evaluate_bird_role_fast(
     # Fair comparison mode: randomly select one role per unique query
     if fair_comparison:
         import random
-        random.seed(42)
+        set_global_seed(42)  # Use centralized seed management
         
         min_len = min(len(role_data), len(gold_list), len(pred_list))
         role_data = role_data[:min_len]

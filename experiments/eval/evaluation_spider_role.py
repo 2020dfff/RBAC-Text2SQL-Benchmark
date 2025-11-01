@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
 import sys
 from typing import Dict, List, Sequence, Tuple
 
@@ -14,6 +13,9 @@ ROOT_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.append(ROOT_PATH)
 
 from func_timeout import FunctionTimedOut, func_timeout
+
+# Import centralized seed management
+from configs.seed import set_global_seed
 
 from experiments.eval.exec_eval import eval_exec_match
 from experiments.eval.livesqlbench_utils import (
@@ -160,7 +162,8 @@ def evaluate_role_adapted(
     print(f"Prediction samples: {len(pred_list)}")
 
     if fair_comparison and role_data:
-        random.seed(42)
+        set_global_seed(42)  # Use centralized seed management
+        import random
         grouped: Dict[str, List[int]] = {}
         for idx, item in enumerate(role_data):
             key = build_question_key(item, idx)
