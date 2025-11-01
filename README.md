@@ -22,10 +22,10 @@ This repository contains the implementation for evaluating Large Language Models
 
 ## Environment Preparation
 
-We use CUDA 12.1 and Python 3.8. Create a conda environment:
+We use CUDA 12.1 and **Python 3.10+**. Create a conda environment:
 
 ```bash
-conda create -n role-sql python=3.8
+conda create -n role-sql python=3.10
 conda activate role-sql
 ```
 

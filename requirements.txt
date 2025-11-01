@@ -1,3 +1,5 @@
+# Python >= 3.10 required
+
 # Core ML/DL frameworks
 torch>=2.0.0
 transformers>=4.35.0
@@ -18,9 +20,8 @@ sqlparse>=0.4.0
 sqlglot>=11.4.1
 nltk>=3.8.0
 
-# Database
+# Database (sqlite3 is built-in, no need to install)
 psycopg2-binary>=2.9.0
-sqlite3  # Built-in, no explicit version
 
 # Evaluation
 func-timeout>=4.3.5
