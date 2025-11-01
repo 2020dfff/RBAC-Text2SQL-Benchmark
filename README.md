@@ -52,9 +52,9 @@ Key dependencies include:
 Download the base Text-to-SQL datasets:
 
 **Spider**:
-```bash
-wget https://yale-lily.github.io/spider/spider.zip
-unzip spider.zip -d spider/
+``` bash
+# go to Spider dataset downloading page: https://drive.usercontent.google.com/download?id=1403EGqzIDoHMdQF4c9Bkyl7dZLZ5Wt6J&export=download&authuser=0
+mkdir -p data/spider/ && unzip spider_data.zip -d data/spider/ && mv data/spider/spider_data/* data/spider/ && rm -rf data/spider/spider_data data/spider/__MACOSX
 ```
 
 **BIRD** (optional):
@@ -70,32 +70,50 @@ unzip spider.zip -d spider/
 
 ### Role-Aware Dataset Generation
 
-Generate role-augmented datasets using LLM-based role generation:
+You have two options to obtain role-augmented datasets:
+
+#### Option 1: Download Pre-generated Datasets (Recommended)
+
+Download ready-to-use role-aware datasets from Hugging Face:
+
+```bash
+# Install huggingface-cli if not already installed
+pip install "huggingface-hub<1.0,>=0.34.0"
+
+# Step 1: Download datasets
+python -c "from huggingface_hub import snapshot_download; snapshot_download('sharkiefff/RBAC_Text2SQL', repo_type='dataset', local_dir='data/role_datasets_temp')"
+
+# Step 2: Organize files into folders
+mkdir -p data/selected/{spider,bird,livesqlbench}
+mv data/role_datasets_temp/spider*.json data/selected/spider/
+mv data/role_datasets_temp/bird*.json data/selected/bird/
+mv data/role_datasets_temp/livesqlbench*.json data/selected/livesqlbench/
+rm -rf data/role_datasets_temp
+```
+
+#### Option 2: Generate from Scratch
+
+Generate role-augmented datasets using interactive notebooks:
 
 **For Spider**:
 ```bash
-python src/processors/spider_role_sql_generator.py \
-    --input_file spider/train_spider.json \
-    --output_file data/spider_role/train_role.json \
-    --schema_file spider/tables.json \
-    --role_generator llm \
-    --llm_model qwen2.5-14b
+# Open the Spider role generation notebook
+jupyter notebook src/quick_assignment_notebook/spider_role_generation.ipynb
+
+# Follow the notebook instructions to:
+# 1. Configure role generation settings
+# 2. Generate role assignments
+# 3. Create role-aware training datasets
 ```
 
 **For BIRD**:
 ```bash
-python src/processors/bird_role_sql_generator.py \
-    --input_file bird/train.json \
-    --output_file data/bird_role/train_role.json \
-    --role_generator llm
+jupyter notebook src/quick_assignment_notebook/bird_role_generation.ipynb
 ```
 
 **For LiveSQLBench**:
 ```bash
-python src/processors/livesqlbench_role_sql_generator.py \
-    --input_file livesqlbench/questions.json \
-    --output_file data/livesqlbench_role/questions_role.json \
-    --role_generator llm
+jupyter notebook src/quick_assignment_notebook/livesql_role_generation.ipynb
 ```
 
 The generated dataset will have the following format:
@@ -110,25 +128,50 @@ The generated dataset will have the following format:
   "db_id": "company"
 }
 ```
+---
 
-### Database Setup (for Evaluation)
+## Evaluation
 
-Initialize PostgreSQL databases:
+### Evaluating on Spider
 
 ```bash
-# Set environment variables
-source scripts/pg_env.sh
-
-# Initialize all databases
-bash scripts/init_all.sh
-
-# Verify connection
-bash scripts/check_pg_connection.sh
+python experiments/eval/evaluation_spider_role.py \
+    --model_path outputs/qwen2.5_spider_role/checkpoint-best \
+    --dataset_file data/spider_role/dev_role.json \
+    --database_path spider/database \
+    --output_file results/spider_eval.json
 ```
+
+### Evaluating on BIRD
+
+```bash
+python experiments/eval/evaluation_bird_role.py \
+    --model_path outputs/qwen2.5_bird_role/checkpoint-best \
+    --dataset_file data/bird_role/dev_role.json \
+    --output_file results/bird_eval.json
+```
+
+### Evaluating on LiveSQLBench
+
+```bash
+python experiments/eval/evaluation_livesqlbench_role.py \
+    --model_path outputs/qwen2.5_livesql_role/checkpoint-best \
+    --dataset_file data/livesqlbench_role/questions_role.json \
+    --output_file results/livesql_eval.json
+```
+
+### Evaluation Metrics
+
+The evaluation script computes:
+- **EX (Execution Accuracy)**: % of queries producing correct results
+- **Answerable Rate**: % of answerable queries the model attempts
+- **Correct Refusal Rate**: % of unanswerable queries correctly refused
+- **Incorrect Refusal Rate**: % of answerable queries incorrectly refused
+- **Violation Rate**: % of unanswerable queries where model generates SQL
 
 ---
 
-## Fine-tuning
+## Fine-tuning （Optional）
 
 ### Downloading Pre-trained Models
 
@@ -176,46 +219,7 @@ Training uses:
 
 ---
 
-## Evaluation
 
-### Evaluating on Spider
-
-```bash
-python experiments/eval/evaluation_spider_role.py \
-    --model_path outputs/qwen2.5_spider_role/checkpoint-best \
-    --dataset_file data/spider_role/dev_role.json \
-    --database_path spider/database \
-    --output_file results/spider_eval.json
-```
-
-### Evaluating on BIRD
-
-```bash
-python experiments/eval/evaluation_bird_role.py \
-    --model_path outputs/qwen2.5_bird_role/checkpoint-best \
-    --dataset_file data/bird_role/dev_role.json \
-    --output_file results/bird_eval.json
-```
-
-### Evaluating on LiveSQLBench
-
-```bash
-python experiments/eval/evaluation_livesqlbench_role.py \
-    --model_path outputs/qwen2.5_livesql_role/checkpoint-best \
-    --dataset_file data/livesqlbench_role/questions_role.json \
-    --output_file results/livesql_eval.json
-```
-
-### Evaluation Metrics
-
-The evaluation script computes:
-- **EX (Execution Accuracy)**: % of queries producing correct results
-- **Answerable Rate**: % of answerable queries the model attempts
-- **Correct Refusal Rate**: % of unanswerable queries correctly refused
-- **Incorrect Refusal Rate**: % of answerable queries incorrectly refused
-- **Violation Rate**: % of unanswerable queries where model generates SQL
-
----
 
 ## Code Structure
 
