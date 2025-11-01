@@ -64,7 +64,8 @@ unzip spider.zip -d spider/
 
 **LiveSQLBench** (optional):
 ```bash
-# Follow instructions at the official repository
+# https://huggingface.co/datasets/birdsql/livesqlbench-base-lite-sqlite
+# To prevent data leakage through automated crawling, please request access to the ground truth and test cases by email.
 ```
 
 ### Role-Aware Dataset Generation
