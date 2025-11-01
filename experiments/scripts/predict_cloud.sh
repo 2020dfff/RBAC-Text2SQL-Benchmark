@@ -302,7 +302,7 @@ if [[ ! -f "$INPUT_FILE" ]]; then
 fi
 
 # Check API key
-API_KEY_VAR="${PROVIDER^^}_API_KEY"
+API_KEY_VAR="$(echo ${PROVIDER} | tr '[:lower:]' '[:upper:]')_API_KEY"
 if [[ -z "${!API_KEY_VAR}" ]]; then
     echo "Warning: $API_KEY_VAR environment variable not set"
     echo "Make sure your API key is configured in .env file"
