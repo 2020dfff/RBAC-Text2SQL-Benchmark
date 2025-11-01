@@ -124,6 +124,48 @@ The generated dataset will have the following format:
 ```
 ---
 
+## Inference with Cloud APIs
+
+After obtaining role-aware datasets, you can use cloud APIs to generate predictions without local GPU training.
+
+### Step 1: Configure API Keys
+
+Edit in your `.env` file and add your API key(s):
+
+```bash
+# Choose one or more providers:
+DEEPINFRA_API_KEY=your-deepinfra-key-here    # Recommended: supports many open-source models
+DEEPSEEK_API_KEY=sk-your-deepseek-key-here   # Cost-effective option
+OPENAI_API_KEY=sk-your-openai-key-here       # For GPT models
+ANTHROPIC_API_KEY=sk-ant-your-key-here       # For Claude models
+```
+
+### Step 2: Run Prediction
+
+Use the cloud inference script to generate SQL predictions:
+
+```bash
+# goes to experiments/scripts/predict_cloud.sh
+# modify the Default parameters around line 29 to predict
+```
+
+**Available Providers and Models**:
+
+| Provider | Example Models | API Key Env |
+|----------|---------------|-------------|
+| `deepinfra` | `google/gemma-3-4b-it`, `google/gemma-3-27b-it` | `DEEPINFRA_API_KEY` |
+| `deepseek` | `deepseek-chat`, `deepseek-coder` | `DEEPSEEK_API_KEY` |
+| `openai` | `gpt-4o-mini`, `gpt-5-mini` | `OPENAI_API_KEY` |
+| `anthropic` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
+| `gemini` | `gemini-2.5-flash` | `GEMINI_API_KEY` |
+
+**Common Options**:
+- `--max_workers`: Number of concurrent API requests
+- `--temperature`: Sampling temperature (default: 0.0 for deterministic output)
+- `--max_tokens`: Maximum tokens in response
+
+
+
 ## Evaluation
 
 ### Evaluating on Spider
@@ -165,7 +207,11 @@ The evaluation script computes:
 
 ---
 
-## Fine-tuning （Optional）
+
+
+## Fine-tuning (Optional)
+
+If you want to fine-tune your own models instead of using cloud APIs:
 
 ### Downloading Pre-trained Models
 
