@@ -97,8 +97,7 @@ Generate role-augmented datasets using interactive notebooks:
 
 **For Spider**:
 ```bash
-# Open the Spider role generation notebook
-jupyter notebook src/quick_assignment_notebook/spider_role_generation.ipynb
+# Open the Spider role generation notebook at src/quick_assignment_notebook/spider_role_generation.ipynb
 
 # Follow the notebook instructions to:
 # 1. Configure role generation settings
@@ -106,14 +105,9 @@ jupyter notebook src/quick_assignment_notebook/spider_role_generation.ipynb
 # 3. Create role-aware training datasets
 ```
 
-**For BIRD**:
+**Same For BIRD and LiveSQLBench**:
 ```bash
 jupyter notebook src/quick_assignment_notebook/bird_role_generation.ipynb
-```
-
-**For LiveSQLBench**:
-```bash
-jupyter notebook src/quick_assignment_notebook/livesql_role_generation.ipynb
 ```
 
 The generated dataset will have the following format:
