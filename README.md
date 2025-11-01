@@ -91,9 +91,9 @@ mv data/role_datasets_temp/livesqlbench*.json data/selected/livesqlbench/
 rm -rf data/role_datasets_temp
 ```
 
-#### Option 2: Generate from Scratch
+#### Option 2: Generate from None
 
-Generate role-augmented datasets using interactive notebooks:
+We provide interactive notebook for generating role-augmented datasets:
 
 **For Spider**:
 ```bash
@@ -147,6 +147,7 @@ Use the cloud inference script to generate SQL predictions:
 ```bash
 # goes to experiments/scripts/predict_cloud.sh
 # modify the Default parameters around line 29 to predict
+./experiments/scripts/predict_cloud.sh
 ```
 
 **Available Providers and Models**:
@@ -163,6 +164,7 @@ Use the cloud inference script to generate SQL predictions:
 - `--max_workers`: Number of concurrent API requests
 - `--temperature`: Sampling temperature (default: 0.0 for deterministic output)
 - `--max_tokens`: Maximum tokens in response
+- `--max_samples`: Max samples from the dataset, leave blank for full
 
 
 
