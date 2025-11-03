@@ -159,6 +159,7 @@ Use the cloud inference script to generate SQL predictions:
 - `--temperature`: Sampling temperature (default: 0.0 for deterministic output)
 - `--max_tokens`: Maximum tokens in response
 - `--max_samples`: Max samples from the dataset, leave blank for full
+- `--role`: Role-based evaluation flag, set true to use RBAC-data
 
 
 
@@ -168,30 +169,34 @@ You can directly modify corresponding bash instructions in experiments/scripts/e
 
 ### 4.1 Evaluating on Spider
 
+Without Role:
+```bash
+python experiments/eval/evaluation_spider.py \
+    --input experiments/output/pred/pred_qwen2.5-coder-7b-bird-role_cleaned.sql \
+    --difficulty_json data/selected/spider/spider_dev.json \
+    --etype exec \
+    --fair_comparison
+```
+
+With Role:
 ```bash
 python experiments/eval/evaluation_spider_role.py \
-    --model_path outputs/qwen2.5_spider_role/checkpoint-best \
-    --dataset_file data/spider_role/dev_role.json \
-    --database_path spider/database \
-    --output_file results/spider_eval.json
+    --input experiments/output/pred/pred_google-gemma-3-4b-it_spider_role.sql \
+    --role_json data/selected/spider/spider_dev_with_role.json \
+    --etype exec \
+    --fair_comparison
 ```
 
 ### 4.2 Evaluating on BIRD
 
 ```bash
-python experiments/eval/evaluation_bird_role.py \
-    --model_path outputs/qwen2.5_bird_role/checkpoint-best \
-    --dataset_file data/bird_role/dev_role.json \
-    --output_file results/bird_eval.json
+# find in experiments/scripts/eval.sh
 ```
 
 ### 4.3 Evaluating on LiveSQLBench
 
 ```bash
-python experiments/eval/evaluation_livesqlbench_role.py \
-    --model_path outputs/qwen2.5_livesql_role/checkpoint-best \
-    --dataset_file data/livesqlbench_role/questions_role.json \
-    --output_file results/livesql_eval.json
+# find in experiments/scripts/eval.sh
 ```
 
 ### 4.4 Evaluation Metrics
