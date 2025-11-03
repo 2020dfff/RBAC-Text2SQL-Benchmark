@@ -10,11 +10,12 @@ This repository contains the implementation for evaluating Large Language Models
 
 ## Table of Contents
 
-- [Environment Preparation](#environment-preparation)
-- [Dataset Preparation](#dataset-preparation)
-- [Evaluation](#evaluation)
-- [Fine-tuning](#fine-tuning)
-- [Code Structure](#code-structure)
+- [Environment Preparation](#1-environment-preparation)
+- [Dataset Preparation](#2-dataset-preparation)
+- [Inference with Cloud APIs](#3-inference-with-cloud-apis)
+- [Evaluation](#4-evaluation)
+- [Fine-tuning (Optional)](#5-fine-tuning-optional)
+- [Code Structure](#6-code-structure)
 
 ---
 
@@ -27,31 +28,61 @@ conda create -n rolesql python=3.10
 conda activate rolesql
 ```
 
-## 6. Code Structure
+Install dependencies. May take a while to setup.
 
-Below is a concise, up-to-date view of the repository layout. Large data files and log directories are intentionally summarized (not listed).
-
+```bash
+pip install -r requirements.txt
 ```
-Role-SQL-benchmark/
-├── README.md
-├── requirements.txt
-├── configs/                        # project configuration (paths, prompts, seed)
-├── data/                           # datasets and generated role-aware datasets 
-├── experiments/                    # training / eval / tooling
-│   ├── train/
-│   ├── eval/
-│   ├── llm_base/
-│   ├── data_process/
-│   ├── output/
-│   └── scripts/
-├── src/                            # main code
-│   ├── processors/                 # dataset / role generation scripts
-│   ├── llm_oracle/                 # LLM role-generation oracle
-│   ├── role_parser/                # parsing LLM outputs into roles
-│   ├── role_evaluator/             # evaluation utilities and decision logic
-│   └── quick_assignment_notebook/  # interactive notebooks for role-gen
-├── logs/                           # runtime logs
-└── cost_analysis.ipynb             # analysis notebook
+
+---
+
+## 2. Dataset Preparation
+
+### 2.1 Base Datasets
+
+Download the base Text-to-SQL datasets:
+
+**Spider**:
+``` bash
+# 1. Use Spider dataset google link to download: (https://drive.usercontent.google.com/download?id=1403EGqzIDoHMdQF4c9Bkyl7dZLZ5Wt6J&export=download&authuser=0): 
+gdown --id 1403EGqzIDoHMdQF4c9Bkyl7dZLZ5Wt6J -O spider_data.zip
+
+# 2. Then organize your working path:
+mkdir -p data/spider/ && unzip spider_data.zip -d data/spider/ && mv data/spider/spider_data/* data/spider/ && rm -rf data/spider/spider_data data/spider/__MACOSX
+```
+
+**BIRD** (optional):
+```bash
+# Follow instructions at https://bird-bench.github.io/
+```
+
+**LiveSQLBench** (optional):
+```bash
+# https://huggingface.co/datasets/birdsql/livesqlbench-base-lite-sqlite
+# To prevent data leakage through automated crawling, please request access to the ground truth and test cases by email.
+```
+
+### 2.2 Role-Aware Dataset Generation
+
+You have two options to obtain role-augmented datasets:
+
+#### 2.2.1 Option 1: Download Pre-generated Datasets (Recommended)
+
+Download ready-to-use role-aware datasets from Hugging Face:
+
+```bash
+# Install huggingface-cli if not already installed
+pip install "huggingface-hub<1.0,>=0.34.0"
+
+# Step 1: Download datasets
+python -c "from huggingface_hub import snapshot_download; snapshot_download('sharkiefff/RBAC_Text2SQL', repo_type='dataset', local_dir='data/role_datasets_temp')"
+
+# Step 2: Organize files into folders
+mkdir -p data/selected/{spider,bird,livesqlbench}
+mv data/role_datasets_temp/spider*.json data/selected/spider/
+mv data/role_datasets_temp/bird*.json data/selected/bird/
+mv data/role_datasets_temp/livesqlbench*.json data/selected/livesqlbench/
+rm -rf data/role_datasets_temp
 ```
 
 #### 2.2.2 Option 2: Generate from None
@@ -217,53 +248,28 @@ Training uses:
 
 ## 6. Code Structure
 
+Below is a concise, up-to-date view of the repository layout. Large data files and log directories are intentionally summarized (not listed).
+
 ```
 Role-SQL-benchmark/
-├── configs/
-│   ├── prompts.py                    # System/user prompts for role generation
-|   ├── seed.py                       # Global random seed
-│   └── paths.py                      # Centralized path configuration
-├── data/
-│   ├── spider_role/                  # Spider role-aware datasets
-│   ├── bird_role/                    # BIRD role-aware datasets
-│   ├── livesqlbench_role/            # LiveSQLBench role-aware datasets
-│   ├── schemas_pg/                   # PostgreSQL schema definitions
-│   └── selected/
-│       └── dataset_info.json         # Dataset configuration mapping
-├── experiments/
+├── README.md
+├── requirements.txt
+├── configs/                        # project configuration (paths, prompts, seed)
+├── data/                           # datasets and generated role-aware datasets 
+├── experiments/                    # training / eval / tooling
 │   ├── train/
-│   │   ├── train_sft.sh              # Main training script
-│   │   └── sft_train.py              # Training entry point
 │   ├── eval/
-│   │   ├── evaluation_spider_role.py # Spider evaluation
-│   │   ├── evaluation_bird_role.py   # BIRD evaluation
-│   │   └── evaluation_livesqlbench_role.py
-│   └── llm_base/
-│       ├── load_tokenizer.py         # Model/tokenizer loading with quantization
-│       ├── adapter.py                # LoRA adapter injection via PEFT
-│       └── model_trainer.py          # Custom trainer with PeftModelMixin
-├── src/
-│   ├── processors/
-│   │   ├── spider_role_sql_generator.py    # Spider role-aware dataset generation
-│   │   ├── bird_role_sql_generator.py      # BIRD role-aware dataset generation
-│   │   └── livesqlbench_role_sql_generator.py
-│   ├── role_parser/
-│   │   └── role_output_parser.py     # LLM output parsing for role extraction
-│   ├── db_migration/
-│   │   └── postgres_utils.py         # PostgreSQL database utilities
-│   ├── evaluator/
-│   │   ├── spider_evaluator.py       # Execution-based evaluation
-│   │   └── livesqlbench_utils.py     # Evaluation metrics computation
-│   └── utils/
-│       └── sql_utils.py              # SQL parsing and validation
-├── llm_oracle/
-│   ├── oracle.py                     # LLM-based role generation oracle
-│   └── README.md
-├── spider/                           # Original Spider dataset
-│   ├── train_spider.json
-│   ├── dev.json
-│   └── database/
-└── requirements.txt                  # Python dependencies
+│   ├── llm_base/
+│   ├── data_process/
+│   ├── output/
+│   └── scripts/
+├── src/                            # main code
+│   ├── processors/                 # dataset / role generation scripts
+│   ├── llm_oracle/                 # LLM role-generation oracle
+│   ├── role_parser/                # parsing LLM outputs into roles
+│   ├── role_evaluator/             # evaluation utilities and decision logic
+│   └── quick_assignment_notebook/  # interactive notebooks for role-gen
+├── logs/                           # runtime logs
+└── cost_analysis.ipynb             # analysis notebook
 ```
-
 ---
