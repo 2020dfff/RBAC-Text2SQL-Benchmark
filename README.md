@@ -4,94 +4,57 @@ This repository contains the implementation for evaluating Large Language Models
 
 **Key Features**:
 - Automatic role generation with table-level permissions using LLMs
-- Permission-aware dataset creation for Spider, BIRD, and LiveSQLBench
-- QLoRA-based fine-tuning for efficient training on consumer GPUs
+- RBAC dataset construction for Spider, BIRD, and LiveSQLBench
 - Comprehensive evaluation metrics for security compliance
-
----
+- Supervised fine-tuning for efficient training (Optional)
 
 ## Table of Contents
 
 - [Environment Preparation](#environment-preparation)
 - [Dataset Preparation](#dataset-preparation)
-- [Fine-tuning](#fine-tuning)
 - [Evaluation](#evaluation)
+- [Fine-tuning](#fine-tuning)
 - [Code Structure](#code-structure)
 
 ---
 
-## Environment Preparation
+## 1. Environment Preparation
 
 We use CUDA 12.1 and **Python 3.10+**. Create a conda environment:
 
 ```bash
-conda create -n role-sql python=3.10
-conda activate role-sql
+conda create -n rolesql python=3.10
+conda activate rolesql
 ```
 
-Install dependencies:
+## 6. Code Structure
 
-```bash
-pip install -r requirements.txt
+Below is a concise, up-to-date view of the repository layout. Large data files and log directories are intentionally summarized (not listed).
+
+```
+Role-SQL-benchmark/
+├── README.md
+├── requirements.txt
+├── configs/                        # project configuration (paths, prompts, seed)
+├── data/                           # datasets and generated role-aware datasets 
+├── experiments/                    # training / eval / tooling
+│   ├── train/
+│   ├── eval/
+│   ├── llm_base/
+│   ├── data_process/
+│   ├── output/
+│   └── scripts/
+├── src/                            # main code
+│   ├── processors/                 # dataset / role generation scripts
+│   ├── llm_oracle/                 # LLM role-generation oracle
+│   ├── role_parser/                # parsing LLM outputs into roles
+│   ├── role_evaluator/             # evaluation utilities and decision logic
+│   └── quick_assignment_notebook/  # interactive notebooks for role-gen
+├── logs/                           # runtime logs
+└── cost_analysis.ipynb             # analysis notebook
 ```
 
-Key dependencies include:
-- `torch>=2.0.0`
-- `transformers>=4.35.0`
-- `peft>=0.7.0` (for LoRA)
-- `bitsandbytes>=0.41.0` (for 4-bit quantization)
-- `deepspeed>=0.12.0` (for distributed training)
-- `psycopg2-binary>=2.9.0` (for PostgreSQL evaluation)
-
----
-
-## Dataset Preparation
-
-### Base Datasets
-
-Download the base Text-to-SQL datasets:
-
-**Spider**:
-``` bash
-# go to Spider dataset downloading page: https://drive.usercontent.google.com/download?id=1403EGqzIDoHMdQF4c9Bkyl7dZLZ5Wt6J&export=download&authuser=0
-mkdir -p data/spider/ && unzip spider_data.zip -d data/spider/ && mv data/spider/spider_data/* data/spider/ && rm -rf data/spider/spider_data data/spider/__MACOSX
-```
-
-**BIRD** (optional):
-```bash
-# Follow instructions at https://bird-bench.github.io/
-```
-
-**LiveSQLBench** (optional):
-```bash
-# https://huggingface.co/datasets/birdsql/livesqlbench-base-lite-sqlite
-# To prevent data leakage through automated crawling, please request access to the ground truth and test cases by email.
-```
-
-### Role-Aware Dataset Generation
-
-You have two options to obtain role-augmented datasets:
-
-#### Option 1: Download Pre-generated Datasets (Recommended)
-
-Download ready-to-use role-aware datasets from Hugging Face:
-
-```bash
-# Install huggingface-cli if not already installed
-pip install "huggingface-hub<1.0,>=0.34.0"
-
-# Step 1: Download datasets
-python -c "from huggingface_hub import snapshot_download; snapshot_download('sharkiefff/RBAC_Text2SQL', repo_type='dataset', local_dir='data/role_datasets_temp')"
-
-# Step 2: Organize files into folders
-mkdir -p data/selected/{spider,bird,livesqlbench}
-mv data/role_datasets_temp/spider*.json data/selected/spider/
-mv data/role_datasets_temp/bird*.json data/selected/bird/
-mv data/role_datasets_temp/livesqlbench*.json data/selected/livesqlbench/
-rm -rf data/role_datasets_temp
-```
-
-#### Option 2: Generate from None
+#### 2.2.2 Option 2: Generate from None
 
 We provide interactive notebook for generating role-augmented datasets:
 
@@ -124,11 +87,11 @@ The generated dataset will have the following format:
 ```
 ---
 
-## Inference with Cloud APIs
+## 3. Inference with Cloud APIs
 
 After obtaining role-aware datasets, you can use cloud APIs to generate predictions without local GPU training.
 
-### Step 1: Configure API Keys
+### 3.1: Configure API Keys
 
 Edit in your `.env` file and add your API key(s):
 
@@ -140,7 +103,7 @@ OPENAI_API_KEY=sk-your-openai-key-here       # For GPT models
 ANTHROPIC_API_KEY=sk-ant-your-key-here       # For Claude models
 ```
 
-### Step 2: Run Prediction
+### 3.2: Run Prediction
 
 Use the cloud inference script to generate SQL predictions:
 
@@ -155,8 +118,8 @@ Use the cloud inference script to generate SQL predictions:
 | Provider | Example Models | API Key Env |
 |----------|---------------|-------------|
 | `deepinfra` | `google/gemma-3-4b-it`, `google/gemma-3-27b-it` | `DEEPINFRA_API_KEY` |
-| `deepseek` | `deepseek-chat`, `deepseek-coder` | `DEEPSEEK_API_KEY` |
-| `openai` | `gpt-4o-mini`, `gpt-5-mini` | `OPENAI_API_KEY` |
+| `deepseek` | `deepseek-coder`, `deepseek-reasoner` | `DEEPSEEK_API_KEY` |
+| `openai` | `gpt-4o-mini`, `gpt-5-mini`, `gpt-5` | `OPENAI_API_KEY` |
 | `anthropic` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `gemini-2.5-flash` | `GEMINI_API_KEY` |
 
@@ -168,9 +131,11 @@ Use the cloud inference script to generate SQL predictions:
 
 
 
-## Evaluation
+## 4. Evaluation
+You can directly modify corresponding bash instructions in experiments/scripts/eval.sh to run the evaluation.
 
-### Evaluating on Spider
+
+### 4.1 Evaluating on Spider
 
 ```bash
 python experiments/eval/evaluation_spider_role.py \
@@ -180,7 +145,7 @@ python experiments/eval/evaluation_spider_role.py \
     --output_file results/spider_eval.json
 ```
 
-### Evaluating on BIRD
+### 4.2 Evaluating on BIRD
 
 ```bash
 python experiments/eval/evaluation_bird_role.py \
@@ -189,7 +154,7 @@ python experiments/eval/evaluation_bird_role.py \
     --output_file results/bird_eval.json
 ```
 
-### Evaluating on LiveSQLBench
+### 4.3 Evaluating on LiveSQLBench
 
 ```bash
 python experiments/eval/evaluation_livesqlbench_role.py \
@@ -198,7 +163,7 @@ python experiments/eval/evaluation_livesqlbench_role.py \
     --output_file results/livesql_eval.json
 ```
 
-### Evaluation Metrics
+### 4.4 Evaluation Metrics
 
 The evaluation script computes:
 - **EX (Execution Accuracy)**: % of queries producing correct results
@@ -211,29 +176,16 @@ The evaluation script computes:
 
 
 
-## Fine-tuning (Optional)
+## 5. Fine-tuning (Optional)
 
 If you want to fine-tune your own models instead of using cloud APIs:
 
-### Downloading Pre-trained Models
+Change the ```model_name_or_path``` in experiments/scripts/train_sft.sh, around line 20; 
 
-Download models from Hugging Face:
-
-```bash
-# Qwen2.5-14B (recommended)
-huggingface-cli download Qwen/Qwen2.5-14B-Instruct --local-dir models/qwen2.5-14b
-
-# Llama-3-8B (alternative)
-huggingface-cli download meta-llama/Llama-3-8B-Instruct --local-dir models/llama3-8b
-```
-
-### Training a Role-Aware Model
-
-Train using QLoRA on Spider role-aware dataset:
+Then train using QLoRA on Spider role-aware dataset:
 
 ```bash
-cd experiments/train
-bash train_sft.sh
+bash experiments/scripts/train_sft.sh
 ```
 
 Key configuration in `train_sft.sh`:
@@ -250,7 +202,7 @@ LEARNING_RATE=5e-5
 
 **Multi-GPU Training**:
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash train_sft.sh
+bash experiments/scripts/train_sft.sh
 ```
 
 Training uses:
@@ -263,15 +215,14 @@ Training uses:
 
 
 
-## Code Structure
+## 6. Code Structure
 
 ```
 Role-SQL-benchmark/
-├── config/
-│   └── eval_config.yaml              # Evaluation configuration
 ├── configs/
 │   ├── prompts.py                    # System/user prompts for role generation
-│   └── role_templates.yaml           # Predefined role templates
+|   ├── seed.py                       # Global random seed
+│   └── paths.py                      # Centralized path configuration
 ├── data/
 │   ├── spider_role/                  # Spider role-aware datasets
 │   ├── bird_role/                    # BIRD role-aware datasets
@@ -305,10 +256,6 @@ Role-SQL-benchmark/
 │   │   └── livesqlbench_utils.py     # Evaluation metrics computation
 │   └── utils/
 │       └── sql_utils.py              # SQL parsing and validation
-├── scripts/
-│   ├── init_all.sh                   # Initialize all PostgreSQL databases
-│   ├── check_pg_connection.sh        # Verify database connectivity
-│   └── pg_env.sh                     # PostgreSQL environment variables
 ├── llm_oracle/
 │   ├── oracle.py                     # LLM-based role generation oracle
 │   └── README.md
@@ -320,22 +267,3 @@ Role-SQL-benchmark/
 ```
 
 ---
-
-## Citation
-
-If you use this benchmark in your research, please cite:
-
-```bibtex
-@article{role-sql-2024,
-  title={Role-Based Access Control for Text-to-SQL: Benchmark and Evaluation},
-  author={Your Name and Collaborators},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2024}
-}
-```
-
----
-
-## License
-
-This project is licensed under the Apache License 2.0. Third-party datasets (Spider, BIRD) retain their original licenses.

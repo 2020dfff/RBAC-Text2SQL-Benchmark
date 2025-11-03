@@ -38,6 +38,7 @@ pytest>=7.0.0
 tqdm>=4.65.0
 python-dotenv>=1.0.0
 matplotlib==3.10.6
+gdown==5.2.0
 
 # LLM API clients (optional, for role generation)
 openai>=1.0.0
