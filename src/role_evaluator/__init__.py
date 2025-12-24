@@ -19,6 +19,15 @@ __all__ = [
     "DatasetComparisonSpec",
     "BatchEvaluationResult",
     "load_role_assignments",
+    # Quality metrics
+    "RoleQualityEvaluator",
+    "QualityReport",
+    "DenyRateMetrics",
+    "SemanticMetrics",
+    "OverlapMetrics",
+    "print_quality_report",
+    # Visualization
+    "RoleQualityVisualizer",
 ]
 
 
@@ -33,4 +42,20 @@ def __getattr__(name: str) -> Any:
     }:
         module = import_module(".judge", __name__)
         return getattr(module, name)
+    
+    if name in {
+        "RoleQualityEvaluator",
+        "QualityReport",
+        "DenyRateMetrics",
+        "SemanticMetrics",
+        "OverlapMetrics",
+        "print_quality_report",
+    }:
+        module = import_module(".quality_metrics", __name__)
+        return getattr(module, name)
+    
+    if name == "RoleQualityVisualizer":
+        module = import_module(".quality_visualizer", __name__)
+        return getattr(module, name)
+    
     raise AttributeError(f"module {__name__} has no attribute {name}")

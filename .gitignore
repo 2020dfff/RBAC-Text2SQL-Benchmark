@@ -39,7 +39,7 @@ wheels/
 .history/
 
 # Environment
-# .env
+.env
 .venv
 env/
 venv/
@@ -97,6 +97,7 @@ db_migration/
 *.hdf5
 *.pkl
 *.pickle
+docs/
 
 # IDE
 .idea/
@@ -111,6 +112,7 @@ htmlcov/
 *.bak
 .*.swp
 *~.nib
+
 
 # Cache
 .cache/
