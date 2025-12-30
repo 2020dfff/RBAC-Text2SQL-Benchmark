@@ -228,17 +228,25 @@ class SQLColumnExtractor:
         cte_names = self._extract_cte_names(sql)
         
         stmt = parsed[0]
-        tables = self._extract_tables_sqlparse(stmt)
+        raw_tables = self._extract_tables_sqlparse(stmt)
         
         # Filter out CTE names from tables
-        tables = tables - cte_names
+        raw_tables = raw_tables - cte_names
+        
+        # Get schema for validation
+        schema = self.get_db_schema(db_path) if db_path else {}
+        
+        # Filter to only keep tables that exist in schema (if schema available)
+        # This filters out false positives like CTE column aliases misidentified as tables
+        if schema:
+            tables = set(t for t in raw_tables if t in schema)
+        else:
+            tables = raw_tables
         
         columns: Dict[str, Set[str]] = {t: set() for t in tables}
         raw_columns = []
         has_star = False
         star_tables = set()
-        
-        schema = self.get_db_schema(db_path) if db_path else {}
         
         # Extract columns from SELECT clause
         select_seen = False

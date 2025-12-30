@@ -26,6 +26,12 @@ __all__ = [
     "SemanticMetrics",
     "OverlapMetrics",
     "print_quality_report",
+    # CRUD-level quality metrics
+    "CrudRoleQualityEvaluator",
+    "CrudQualityReport",
+    "CrudDenyRateMetrics",
+    "CrudCoverageMetrics",
+    "print_crud_quality_report",
     # Visualization
     "RoleQualityVisualizer",
 ]
@@ -50,6 +56,12 @@ def __getattr__(name: str) -> Any:
         "SemanticMetrics",
         "OverlapMetrics",
         "print_quality_report",
+        # CRUD-level
+        "CrudRoleQualityEvaluator",
+        "CrudQualityReport",
+        "CrudDenyRateMetrics",
+        "CrudCoverageMetrics",
+        "print_crud_quality_report",
     }:
         module = import_module(".quality_metrics", __name__)
         return getattr(module, name)

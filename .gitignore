@@ -66,6 +66,8 @@ Thumbs.db
 *~
 
 # Project specific data
+data/livesqlbench-full-postgresql/
+data/livesqlbench-demo
 spider/database/
 data/Chase
 data/livesqlbench-base-lite-sqlite
