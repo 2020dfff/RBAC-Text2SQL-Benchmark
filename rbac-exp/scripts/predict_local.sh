@@ -14,7 +14,7 @@ LORA_ADAPTER=""                                 # Path to LoRA adapter (leave em
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATASET CONFIGURATION  
 # ═══════════════════════════════════════════════════════════════════════════════
-DATASET="bird"                                # Options: spider, bird, livesqlbench
+DATASET="livesqlbench"                                # Options: spider, bird, livesqlbench
 
 # Dataset file paths (modify if using custom datasets)
 SPIDER_DATASET="outputs/column_level_rbac_dataset_spider_20251229.json"

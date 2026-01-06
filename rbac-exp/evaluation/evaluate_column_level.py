@@ -115,10 +115,14 @@ def exec_match_with_timeout(
     db_path: str,
     predicted: str,
     gold: str,
-    plug_value: bool = True,
+    plug_value: bool = False,
     keep_distinct: bool = False,
 ) -> bool:
-    """Execute SQL with timeout (aligned with experiments)."""
+    """Execute SQL with timeout (aligned with experiments).
+    
+    Note: plug_value=True causes exponential combination explosion with complex SQLs.
+    For Bird 2025 dataset with CTEs/window functions, this can be extremely slow.
+    """
     try:
         return bool(
             func_timeout(
