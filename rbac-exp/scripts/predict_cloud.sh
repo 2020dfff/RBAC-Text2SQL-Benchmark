@@ -27,16 +27,17 @@ load_env_file ".env" || load_env_file "../../.env" || load_env_file "../../../.e
 # Default parameters (aligned with experiments)
 PROVIDER="deepseek"
 MODEL="deepseek-reasoner"  # Will use provider default
-DATASET="livesqlbench"  # spider, bird, livesqlbench
+DATASET="spider"  # spider, bird, livesqlbench
 INPUT_FILE=""  # Will be constructed from dataset
 OUTPUT_DIR="rbac-exp/output/pred"
 MAX_SAMPLES=""  # Set to empty for all samples
-WORKERS="40"  # Use provider default
-RATE_LIMIT="0.1"
+WORKERS="3"  # Use provider default
+RATE_LIMIT="2.0"
 TEMPERATURE="0.0"
 MAX_TOKENS="4096"
 SHOT_NUM="0"  # Zero/Few-shot examples (0, 2, 4, 6)
-STRUCTURED="false"  # Use structured prompt format
+STRUCTURED="true"  # Use structured prompt format
+MODE="baseline"  # Evaluation mode: rbac or baseline
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -88,6 +89,10 @@ while [[ $# -gt 0 ]]; do
         --structured)
             STRUCTURED="true"
             shift 1
+            ;;
+        --mode)
+            MODE="$2"
+            shift 2
             ;;
         --help)
             echo "Usage: $0 [OPTIONS]"
@@ -170,10 +175,16 @@ if [[ "$STRUCTURED" == "true" ]]; then
     STRUCT_SUFFIX="_structured"
 fi
 
+# Generate mode suffix for output filename
+MODE_SUFFIX="_rbac"
+if [[ "$MODE" == "baseline" ]]; then
+    MODE_SUFFIX="_baseline"
+fi
+
 if [[ -n "$MAX_SAMPLES" ]]; then
-    OUTPUT_FILE="${OUTPUT_DIR}/pred_${MODEL_DISPLAY}_${MAX_SAMPLES}samples_${DATASET}${SHOT_SUFFIX}${STRUCT_SUFFIX}_rbac.sql"
+    OUTPUT_FILE="${OUTPUT_DIR}/pred_${MODEL_DISPLAY}_${MAX_SAMPLES}samples_${DATASET}${SHOT_SUFFIX}${STRUCT_SUFFIX}${MODE_SUFFIX}.sql"
 else
-    OUTPUT_FILE="${OUTPUT_DIR}/pred_${MODEL_DISPLAY}_${DATASET}${SHOT_SUFFIX}${STRUCT_SUFFIX}_rbac.sql"
+    OUTPUT_FILE="${OUTPUT_DIR}/pred_${MODEL_DISPLAY}_${DATASET}${SHOT_SUFFIX}${STRUCT_SUFFIX}${MODE_SUFFIX}.sql"
 fi
 
 # Create directories
@@ -190,6 +201,7 @@ echo "========================================="
 echo "Provider: $PROVIDER"
 echo "Model: ${MODEL:-'(provider default)'}"
 echo "Dataset: $DATASET"
+echo "Mode: $MODE"
 echo "Input file: $INPUT_FILE"
 echo "Output file: $OUTPUT_FILE"
 echo "Log file: $LOG_FILE"
@@ -240,6 +252,9 @@ fi
 if [[ "$STRUCTURED" == "true" ]]; then
     CMD="$CMD --structured"
 fi
+
+# Add mode parameter
+CMD="$CMD --mode \"$MODE\""
 
 # Execute prediction
 echo "$(date): Executing: $CMD" | tee -a "$LOG_FILE"

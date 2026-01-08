@@ -28,6 +28,8 @@ class RBACDataItem:
     operation: Optional[str] = None    # Operation type (LiveSQLBench)
     category: Optional[str] = None     # Category (LiveSQLBench)
     metadata: Optional[Dict[str, Any]] = None  # Additional metadata
+    instance_id: Optional[str] = None  # Original instance ID (for baseline dedup)
+    normal_query: Optional[str] = None # Original question without RBAC context (for baseline)
     
     # Prediction fields (filled during inference)
     prediction: Optional[str] = None
@@ -205,6 +207,8 @@ def parse_livesqlbench_item(
         database=database,
         operation=operation,
         category=category,
+        instance_id=raw_item.get("instance_id"),  # For baseline dedup
+        normal_query=raw_item.get("normal_query"),  # For baseline prompt
         metadata={
             "original_item": {k: v for k, v in raw_item.items() 
                             if k not in ["instruction", "gold_sql", "allowed", "db_id"]}

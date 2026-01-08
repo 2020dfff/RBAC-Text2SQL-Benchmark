@@ -71,9 +71,11 @@ class SemanticMetrics:
     """
     db_id: str
     avg_similarity: float  # Average cosine similarity between role text and schema
-    min_similarity: float  # Minimum similarity (worst aligned role)
-    max_similarity: float  # Maximum similarity (best aligned role)
     num_roles: int
+    min_similarity: float = 0.0  # Minimum similarity (worst aligned role)
+    max_similarity: float = 1.0  # Maximum similarity (best aligned role)
+    avg_coverage: float = 0.0  # Average column coverage (excluding SystemManager)
+    coverage_std: float = 0.0  # Standard deviation of coverage
     issues: List[str] = field(default_factory=list)
     
     @property

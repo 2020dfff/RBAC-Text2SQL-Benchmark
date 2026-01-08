@@ -44,7 +44,7 @@ PROVIDERS: Dict[str, APIConfig] = {
         url="https://api.deepseek.com/v1/chat/completions",
         key_env="DEEPSEEK_API_KEY",
         default_model="deepseek-chat",
-        default_workers=5,
+        default_workers=3,  # Reduced for stability, especially for reasoning models
     ),
     "deepinfra": APIConfig(
         url="https://api.deepinfra.com/v1/openai/chat/completions",
@@ -69,8 +69,8 @@ class CloudAPIClient:
         provider: str,
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
-        max_retries: int = 3,
-        timeout: int = 60,
+        max_retries: int = 5,  # Increased retries for unstable connections
+        timeout: int = 180,    # Increased timeout for reasoning models (3 min)
     ):
         if provider not in PROVIDERS:
             raise ValueError(f"Unsupported provider: {provider}. Supported: {list(PROVIDERS.keys())}")
@@ -188,6 +188,58 @@ class CloudAPIClient:
             logger.error(f"Failed to extract response: {e}")
             return ""
     
+    def _is_reasoning_model(self) -> bool:
+        """Check if current model is a reasoning model that needs streaming."""
+        reasoning_models = ["deepseek-reasoner", "o1", "o3"]
+        return any(m in self.model_name.lower() for m in reasoning_models)
+    
+    def _call_streaming(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.0,
+    ) -> str:
+        """Make streaming API call for reasoning models."""
+        headers = self._build_headers()
+        payload = self._build_payload(prompt, max_tokens, temperature)
+        payload["stream"] = True
+        url = self._get_url()
+        
+        try:
+            response = requests.post(
+                url, json=payload, headers=headers, 
+                timeout=self.timeout, stream=True
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"API error {response.status_code}: {response.text[:200]}")
+                return ""
+            
+            # Collect streaming response
+            full_content = ""
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith("data: "):
+                        data_str = line_str[6:]
+                        if data_str.strip() == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            if "choices" in data and len(data["choices"]) > 0:
+                                delta = data["choices"][0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    full_content += content
+                        except json.JSONDecodeError:
+                            continue
+            
+            return full_content.strip()
+            
+        except Exception as e:
+            logger.warning(f"Streaming error: {e}")
+            return ""
+    
     def call(
         self,
         prompt: str,
@@ -202,8 +254,21 @@ class CloudAPIClient:
         payload = self._build_payload(prompt, max_tokens, temperature)
         url = self._get_url()
         
+        # Use streaming for reasoning models to avoid connection timeouts
+        use_streaming = self._is_reasoning_model() and self.provider in ["deepseek", "openai"]
+        
         for attempt in range(self.max_retries):
             try:
+                if use_streaming:
+                    result = self._call_streaming(prompt, max_tokens, temperature)
+                    if result:
+                        return result
+                    # Fall through to retry
+                    wait = 3 ** attempt + 3
+                    logger.warning(f"Streaming failed, retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                
                 response = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
                 
                 if response.status_code == 200:
@@ -221,12 +286,23 @@ class CloudAPIClient:
                     return ""
                     
             except requests.exceptions.Timeout:
-                wait = 2 ** attempt
+                wait = 2 ** attempt + 2
                 logger.warning(f"Timeout, retrying in {wait}s...")
                 time.sleep(wait)
+            except requests.exceptions.ChunkedEncodingError as e:
+                # "Response ended prematurely" - server closed connection
+                wait = 3 ** attempt + 3  # Longer wait for connection issues
+                logger.warning(f"Connection interrupted (ChunkedEncodingError), retrying in {wait}s...")
+                time.sleep(wait)
             except requests.exceptions.RequestException as e:
-                wait = 2 ** attempt
-                logger.warning(f"Request error: {e}, retrying in {wait}s...")
+                error_str = str(e)
+                if "prematurely" in error_str.lower() or "incomplete" in error_str.lower():
+                    # Response ended prematurely - likely server overload
+                    wait = 3 ** attempt + 3
+                    logger.warning(f"Response ended prematurely, retrying in {wait}s...")
+                else:
+                    wait = 2 ** attempt
+                    logger.warning(f"Request error: {e}, retrying in {wait}s...")
                 time.sleep(wait)
         
         return ""

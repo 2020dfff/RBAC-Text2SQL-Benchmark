@@ -7,14 +7,15 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODEL CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-MODEL="Snowflake/Arctic-Text2SQL-R1-7B"    # HuggingFace model name or local path
-TEMPLATE="chatml"                               # Options: chatml, llama2, gemma, default
+# "Snowflake/Arctic-Text2SQL-R1-7B"
+MODEL="defog/llama-3-sqlcoder-8b"               # HuggingFace model name or local path
+TEMPLATE="llama2"                               # Options: chatml, llama2, gemma, default
 LORA_ADAPTER=""                                 # Path to LoRA adapter (leave empty for none)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATASET CONFIGURATION  
 # ═══════════════════════════════════════════════════════════════════════════════
-DATASET="livesqlbench"                                # Options: spider, bird, livesqlbench
+DATASET="spider"                                # Options: spider, bird, livesqlbench
 
 # Dataset file paths (modify if using custom datasets)
 SPIDER_DATASET="outputs/column_level_rbac_dataset_spider_20251229.json"
@@ -39,6 +40,11 @@ CUDA_DEVICES="0,1,2"                          # GPUs to use (comma-separated)
 # ═══════════════════════════════════════════════════════════════════════════════
 SAVE_EVERY=100                                  # Save checkpoint every N samples
 ENABLE_RESUME=true                              # Resume from checkpoint if exists
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EVALUATION MODE
+# ═══════════════════════════════════════════════════════════════════════════════
+MODE="rbac"                                     # Options: rbac, baseline
 
 ################################################################################
 #                         END OF CONFIGURATION                                  
@@ -89,8 +95,15 @@ mkdir -p "$OUTPUT_DIR" "$LOG_DIR"
 
 MODEL_SHORT=$(basename "$MODEL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-OUTPUT_FILE="${OUTPUT_DIR}/pred_${MODEL_SHORT}_${DATASET}.sql"
-LOG_FILE="${LOG_DIR}/pred_${MODEL_SHORT}_${DATASET}_${TIMESTAMP}.log"
+
+# Generate mode suffix for output filename
+MODE_SUFFIX="_rbac"
+if [[ "$MODE" == "baseline" ]]; then
+    MODE_SUFFIX="_baseline"
+fi
+
+OUTPUT_FILE="${OUTPUT_DIR}/pred_${MODEL_SHORT}_${DATASET}${MODE_SUFFIX}.sql"
+LOG_FILE="${LOG_DIR}/pred_${MODEL_SHORT}_${DATASET}${MODE_SUFFIX}_${TIMESTAMP}.log"
 
 # Build flags
 RESUME_FLAG=""; [ "$ENABLE_RESUME" = true ] && RESUME_FLAG="--resume"
@@ -102,6 +115,7 @@ echo " RBAC LOCAL INFERENCE"
 echo "═══════════════════════════════════════════════════════════════════"
 echo " Model      : $MODEL"
 echo " Dataset    : $DATASET"
+echo " Mode       : $MODE"
 echo " Input      : $INPUT_FILE"
 echo " Output     : $OUTPUT_FILE"
 echo " GPUs       : $CUDA_DEVICES"
@@ -121,6 +135,7 @@ CMD="CUDA_VISIBLE_DEVICES=$CUDA_DEVICES python ${RBAC_EXP_DIR}/predict/predict_l
     --temperature $TEMPERATURE \
     --top_p $TOP_P \
     --save_every $SAVE_EVERY \
+    --mode $MODE \
     $RESUME_FLAG $SNOWFLAKE_FLAG"
 
 [ -n "$LORA_ADAPTER" ] && CMD="$CMD --checkpoint_dir $LORA_ADAPTER --finetuning_type lora --quantization_bit 4"

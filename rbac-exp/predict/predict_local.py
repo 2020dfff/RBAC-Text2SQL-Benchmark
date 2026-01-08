@@ -40,7 +40,8 @@ except ImportError:
 from configs.prompts import (
     build_rbac_prompt, 
     get_fewshot_examples,
-    get_rbac_type_from_dataset
+    get_rbac_type_from_dataset,
+    format_baseline_prompt
 )
 
 try:
@@ -105,6 +106,11 @@ def parse_args():
                         help="Save checkpoint every N samples")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from existing checkpoint")
+    
+    # Evaluation mode configuration
+    parser.add_argument("--mode", type=str, default="rbac",
+                        choices=["rbac", "baseline"],
+                        help="Evaluation mode: 'rbac' (with RBAC prompts) or 'baseline' (Text2SQL only, no RBAC)")
     
     return parser.parse_args()
 
@@ -315,6 +321,31 @@ class LocalModelInference:
         return self.tokenizer.decode(response_ids, skip_special_tokens=True).strip()
 
 
+def _select_baseline_item(group_items: List[RBACDataItem]) -> RBACDataItem:
+    """
+    Select the best item for baseline evaluation from a group of items.
+    
+    Priority:
+    1. SystemManager role (always has full permissions, gold_sql is always valid)
+    2. Any item with is_allowed=True
+    3. First item (fallback)
+    
+    This ensures we always get a valid SQL for baseline Text2SQL evaluation.
+    """
+    # Priority 1: SystemManager role
+    for item in group_items:
+        if item.role and "systemmanager" in item.role.lower():
+            return item
+    
+    # Priority 2: Any allowed item
+    for item in group_items:
+        if item.is_allowed:
+            return item
+    
+    # Fallback: first item (shouldn't happen in well-formed datasets)
+    return group_items[0]
+
+
 def prepare_rbac_prompts(
     items: List[RBACDataItem],
     dataset: str,
@@ -349,12 +380,17 @@ def prepare_rbac_prompts(
 
 def run_inference(args):
     """Run local model inference on RBAC dataset."""
+    import random
+    
+    mode = getattr(args, 'mode', 'rbac')
+    
     logger.info("=" * 60)
     logger.info("RBAC Local Model Inference")
     logger.info("=" * 60)
     logger.info(f"Model: {args.model_name_or_path}")
     logger.info(f"Template: {args.template}")
     logger.info(f"Dataset: {args.dataset}")
+    logger.info(f"Mode: {mode}")
     logger.info(f"Input: {args.predicted_input_filename}")
     logger.info(f"Output: {args.predicted_out_filename}")
     logger.info(f"Few-shot: {args.shot_num}")
@@ -376,8 +412,43 @@ def run_inference(args):
     items = load_dataset(args.dataset, args.predicted_input_filename, args.max_samples)
     logger.info(f"Loaded {len(items)} samples from {args.predicted_input_filename}")
     
-    # Prepare prompts with few-shot examples
-    prompts = prepare_rbac_prompts(items, args.dataset, args.shot_num)
+    # Baseline mode: deduplicate by instance_id (livesqlbench) or input (spider/bird)
+    # IMPORTANT: Select SystemManager role entries (always allowed) instead of random selection
+    if mode == "baseline":
+        logger.info("Baseline mode: Deduplicating samples by selecting SystemManager role...")
+        
+        if args.dataset.lower() == "livesqlbench":
+            # LiveSQLBench: group by instance_id
+            instance_groups = {}
+            for item in items:
+                key = item.instance_id or item.id
+                if key not in instance_groups:
+                    instance_groups[key] = []
+                instance_groups[key].append(item)
+            
+            deduped_items = [_select_baseline_item(group) for group in instance_groups.values()]
+            logger.info(f"Deduplicated: {len(items)} -> {len(deduped_items)} unique instance_ids")
+            items = deduped_items
+        else:
+            # Spider/Bird: group by input (question)
+            question_groups = {}
+            for item in items:
+                key = item.input or item.id
+                if key not in question_groups:
+                    question_groups[key] = []
+                question_groups[key].append(item)
+            
+            deduped_items = [_select_baseline_item(group) for group in question_groups.values()]
+            logger.info(f"Deduplicated: {len(items)} -> {len(deduped_items)} unique questions")
+            items = deduped_items
+    
+    # Prepare prompts based on mode
+    if mode == "baseline":
+        logger.info("Using BASELINE prompts (Text2SQL only, no RBAC)")
+        prompts = [format_baseline_prompt(item, args.dataset, args.shot_num) for item in items]
+    else:
+        logger.info("Using RBAC prompts (with role/policy)")
+        prompts = prepare_rbac_prompts(items, args.dataset, args.shot_num)
     
     # Setup output paths
     sql_output_path = args.predicted_out_filename

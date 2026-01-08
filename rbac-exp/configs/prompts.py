@@ -623,3 +623,129 @@ def build_structured_prompt(
             evidence=evidence,
             shot_num=shot_num
         )
+
+
+# =============================================================================
+# Baseline (Text2SQL without RBAC) Prompt Templates
+# =============================================================================
+
+BASELINE_SYSTEM_PROMPT = (
+    "I want you to act as a SQL terminal in front of an example database. "
+    "You need only to return the sql command to me. "
+    "Below is an instruction that describes a task. Write a response that appropriately completes the request."
+)
+
+BASELINE_PROMPT_DICT = {
+    "prompt_input": (
+        f"{BASELINE_SYSTEM_PROMPT}\n\n"
+        "{instruction}\n"
+        "###Input:\n{input}\n\n###Response:"
+    ),
+    "prompt_no_input": (
+        f"{BASELINE_SYSTEM_PROMPT}\n\n"
+        "{instruction}\n\n###Response:"
+    ),
+}
+
+
+def format_baseline_prompt_spider_bird(
+    item,
+    shot_num: int = 0
+) -> str:
+    """
+    Format baseline prompt for Spider/Bird (Text2SQL without RBAC).
+    
+    Extracts pure schema from RBAC instruction and removes role/policy info.
+    
+    Args:
+        item: RBACDataItem or dict with instruction, input fields
+        shot_num: Number of few-shot examples (for baseline, typically 0)
+        
+    Returns:
+        Baseline prompt string (schema + question, no RBAC)
+    """
+    instruction = getattr(item, 'instruction', '') if hasattr(item, 'instruction') else item.get('instruction', '')
+    question = getattr(item, 'input', '') if hasattr(item, 'input') else item.get('input', '')
+    
+    # Extract pure schema (remove ##Role Access Policy section)
+    schema = _extract_schema_spider_bird(instruction)
+    
+    # Build baseline prompt
+    return f"{BASELINE_SYSTEM_PROMPT}\n\n{schema}\n###Input:\n{question}\n\n###Response:"
+
+
+def format_baseline_prompt_livesqlbench(
+    item,
+    shot_num: int = 0
+) -> str:
+    """
+    Format baseline prompt for LiveSQLBench (Text2SQL without RBAC).
+    
+    Extracts schema/column_meanings/external_knowledge but removes role/policy.
+    Uses 'normal_query' if available (cleaner question without RBAC context).
+    
+    Args:
+        item: RBACDataItem or dict with instruction, input, normal_query fields
+        shot_num: Number of few-shot examples (for baseline, typically 0)
+        
+    Returns:
+        Baseline prompt string (schema + question, no RBAC)
+    """
+    instruction = getattr(item, 'instruction', '') if hasattr(item, 'instruction') else item.get('instruction', '')
+    # Prefer normal_query for baseline (cleaner question)
+    question = getattr(item, 'normal_query', None) if hasattr(item, 'normal_query') else item.get('normal_query')
+    if not question:
+        question = getattr(item, 'input', '') if hasattr(item, 'input') else item.get('input', '')
+    
+    # Extract schema parts (without role/policy)
+    schema = _extract_schema_livesqlbench(instruction)
+    column_meanings = _extract_column_meanings_livesqlbench(instruction)
+    external_knowledge = _extract_external_knowledge_livesqlbench(instruction)
+    
+    # Build baseline prompt
+    prompt_parts = [BASELINE_SYSTEM_PROMPT, "", schema]
+    
+    if column_meanings:
+        prompt_parts.append(f"\n# Column Meanings:\n{column_meanings}")
+    
+    if external_knowledge:
+        prompt_parts.append(f"\n# External Knowledge:\n{external_knowledge}")
+    
+    prompt_parts.append(f"""
+# User Task:
+{question}
+Generate the correct PostgreSQL to handle the user task above.
+
+(FORMAT: Enclose your final PostgreSQL in '```postgresql\\n[Your Generated SQLs]\\n```'. Use semicolon to separate multiple statements.)
+
+# Your Generated SQL:""")
+    
+    return "\n".join(prompt_parts)
+
+
+def format_baseline_prompt(
+    item,
+    dataset: str,
+    shot_num: int = 0
+) -> str:
+    """
+    Format baseline (Text2SQL without RBAC) prompt for any dataset.
+    
+    This is the main entry point for baseline mode.
+    Dispatches to dataset-specific formatter.
+    
+    Args:
+        item: RBACDataItem or dict with data fields
+        dataset: Dataset name (spider, bird, livesqlbench)
+        shot_num: Number of few-shot examples
+        
+    Returns:
+        Baseline prompt string
+    """
+    dataset_lower = dataset.lower()
+    
+    if dataset_lower == "livesqlbench":
+        return format_baseline_prompt_livesqlbench(item, shot_num)
+    else:
+        # Spider and Bird use the same format
+        return format_baseline_prompt_spider_bird(item, shot_num)

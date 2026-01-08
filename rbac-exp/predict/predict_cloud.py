@@ -37,7 +37,8 @@ from configs.prompts import (
     format_column_level_prompt, 
     format_crud_level_prompt, 
     get_rbac_type_from_dataset,
-    build_structured_prompt
+    build_structured_prompt,
+    format_baseline_prompt
 )
 
 # Import response cleaner from experiments (for consistent SQL extraction)
@@ -87,6 +88,11 @@ def parse_args():
     parser.add_argument("--structured", action="store_true",
                         help="Use structured prompt format (extracts schema from instruction, uses JSON policy)")
     
+    # Evaluation mode configuration
+    parser.add_argument("--mode", type=str, default="rbac",
+                        choices=["rbac", "baseline"],
+                        help="Evaluation mode: 'rbac' (with RBAC prompts) or 'baseline' (Text2SQL only, no RBAC)")
+    
     # Output configuration (aligned with experiments)
     parser.add_argument("--output", type=str, required=True,
                         help="Output SQL file path")
@@ -131,15 +137,47 @@ class ProgressTracker:
             self.pbar.close()
 
 
+def _select_baseline_item(group_items: List[RBACDataItem]) -> RBACDataItem:
+    """
+    Select the best item for baseline evaluation from a group of items.
+    
+    Priority:
+    1. SystemManager role (always has full permissions, gold_sql is always valid)
+    2. Any item with is_allowed=True
+    3. First item (fallback)
+    
+    This ensures we always get a valid SQL for baseline Text2SQL evaluation.
+    """
+    # Priority 1: SystemManager role
+    for item in group_items:
+        if item.role and "systemmanager" in item.role.lower():
+            return item
+    
+    # Priority 2: Any allowed item
+    for item in group_items:
+        if item.is_allowed:
+            return item
+    
+    # Fallback: first item (shouldn't happen in well-formed datasets)
+    return group_items[0]
+
+
 def run_inference(args) -> Dict[str, Any]:
     """
     Run cloud inference aligned with experiments workflow.
+    
+    Supports two modes:
+    - 'rbac': Full RBAC evaluation with role/policy prompts
+    - 'baseline': Text2SQL only (no RBAC), deduplicated by instance_id/input
     
     Output: 
     - Primary: .sql file with one cleaned SQL per line
     - Secondary: _detailed.json for debugging/evaluation
     """
-    logger.info(f"Starting cloud inference with provider: {args.provider}")
+    import random
+    
+    mode = getattr(args, 'mode', 'rbac')
+    logger.info(f"Starting cloud inference with provider: {args.provider}, mode: {mode}")
     
     # Initialize client
     client = CloudAPIClient(
@@ -166,11 +204,53 @@ def run_inference(args) -> Dict[str, Any]:
         logger.error("No data loaded!")
         return {"error": "No data loaded"}
     
+    # Baseline mode: deduplicate by instance_id (livesqlbench) or input (spider/bird)
+    # IMPORTANT: Select SystemManager role entries (always allowed) instead of random selection
+    if mode == "baseline":
+        logger.info("Baseline mode: Deduplicating samples by selecting SystemManager role...")
+        
+        if args.dataset.lower() == "livesqlbench":
+            # LiveSQLBench: group by instance_id, prefer SystemManager role
+            instance_groups = {}
+            for item in items:
+                key = item.instance_id or item.id
+                if key not in instance_groups:
+                    instance_groups[key] = []
+                instance_groups[key].append(item)
+            
+            # Select SystemManager if available, otherwise first allowed item
+            deduped_items = []
+            for instance_id, group_items in instance_groups.items():
+                selected = _select_baseline_item(group_items)
+                deduped_items.append(selected)
+            
+            logger.info(f"Deduplicated: {len(items)} -> {len(deduped_items)} unique instance_ids")
+            items = deduped_items
+        else:
+            # Spider/Bird: group by input (question), prefer SystemManager role
+            question_groups = {}
+            for item in items:
+                key = item.input or item.id
+                if key not in question_groups:
+                    question_groups[key] = []
+                question_groups[key].append(item)
+            
+            # Select SystemManager if available, otherwise first allowed item
+            deduped_items = []
+            for question, group_items in question_groups.items():
+                selected = _select_baseline_item(group_items)
+                deduped_items.append(selected)
+            
+            logger.info(f"Deduplicated: {len(items)} -> {len(deduped_items)} unique questions")
+            items = deduped_items
+    
     # Determine RBAC type for prompt formatting
     rbac_type = get_rbac_type_from_dataset(args.dataset)
     use_structured = getattr(args, 'structured', False)
     
-    if use_structured:
+    if mode == "baseline":
+        logger.info(f"Using BASELINE prompt format (Text2SQL only, no RBAC)")
+    elif use_structured:
         logger.info(f"Using STRUCTURED prompt format for dataset: {args.dataset}")
     else:
         logger.info(f"Using ORIGINAL prompt format ({rbac_type}) for dataset: {args.dataset}")
@@ -178,7 +258,10 @@ def run_inference(args) -> Dict[str, Any]:
     # Build prompts for each item
     prompts = []
     for item in items:
-        if use_structured:
+        if mode == "baseline":
+            # Baseline mode: no RBAC information
+            prompt = format_baseline_prompt(item, args.dataset, shot_num)
+        elif use_structured:
             # Structured mode: extract schema, use JSON policy
             prompt = build_structured_prompt(item, args.dataset, shot_num)
         elif rbac_type == "crud_level":
@@ -261,12 +344,14 @@ def run_inference(args) -> Dict[str, Any]:
         for item, raw_response, cleaned_sql in zip(items, raw_results, cleaned_results):
             detailed_data.append({
                 "id": item.id,
+                "instance_id": item.instance_id,  # For baseline mode tracking
                 "database": item.database,
                 "gold_sql": item.gold_sql,
                 "is_allowed": item.is_allowed,
                 "pred_sql": cleaned_sql,
                 "raw_response": raw_response,
                 "difficulty": item.difficulty,
+                "mode": mode,  # Track evaluation mode
                 "metadata": item.metadata,
             })
         with open(json_output_path, "w", encoding="utf-8") as f:
@@ -284,6 +369,7 @@ def run_inference(args) -> Dict[str, Any]:
     stats = {
         "provider": args.provider,
         "model": client.model_name,
+        "mode": mode,
         "total_samples": len(items),
         "successful_samples": success_count,
         "sorry_responses": sorry_count,

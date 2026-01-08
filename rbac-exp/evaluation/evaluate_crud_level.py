@@ -26,6 +26,13 @@ Usage:
         --db_user xxx --db_password xxxxx \\
         --num_workers 4
 
+    e.g.,
+    python -m rbac-exp.evaluation.evaluate_crud_level \
+    --prediction_path rbac-exp/output/pred/pred_deepseek-reasoner_livesqlbench_rbac.sql \
+    --role_json data/selected/livesqlbench-full/crud_rbac_dataset_v2_20251230.json \
+    --db_user feiy --db_password REDACTED \
+    --num_workers 8 --fair_comparison 2>&1 | tee /tmp/livesqlbench_eval_v2.log
+
 Six-category classification:
 1. correct: Allowed + model provides correct SQL
 2. wrong: Allowed + model provides wrong SQL  
@@ -1006,6 +1013,251 @@ def evaluate_single_sample(
 
 
 # ===========================================================================
+# Multi-Trial Support for Fair Comparison
+# ===========================================================================
+
+def _run_multiple_trials_crud(
+    role_dataset: List[Dict[str, Any]],
+    predictions: List[str],
+    grouped: Dict[str, List[int]],
+    num_trials: int,
+    pg_config: Dict[str, Any],
+    output_dir: str,
+    base_name: str,
+    suffix: str,
+    dry_run: bool,
+    num_workers: int,
+) -> Dict[str, Any]:
+    """Run multiple evaluation trials for CRUD-level RBAC and aggregate results."""
+    import numpy as np
+    
+    logger.info(f"Running {num_trials} trials with different random seeds...")
+    
+    all_trials = []
+    
+    for trial_idx in range(num_trials):
+        seed = 42 + trial_idx
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"Trial {trial_idx + 1}/{num_trials} (seed={seed})")
+        logger.info(f"{'=' * 60}")
+        
+        # Select samples with this seed
+        random.seed(seed)
+        selected = sorted(random.choice(indices) for indices in grouped.values())
+        trial_role_dataset = [role_dataset[i] for i in selected]
+        trial_predictions = [predictions[i] for i in selected]
+        
+        # Collect database names for this trial
+        all_db_names = set()
+        management_db_names = set()
+        for item in trial_role_dataset:
+            db_id = item.get("db_id", "")
+            if db_id:
+                all_db_names.add(db_id)
+                operation = normalize_operation(item.get("operation", "unknown"))
+                category = item.get("category", "Query")
+                if operation in MODIFYING_OPERATIONS or category == "Management":
+                    management_db_names.add(db_id)
+        
+        # Create ephemeral DB copies for this trial
+        ephemeral_db_pool = {}
+        ephemeral_db_queues = {}
+        
+        if not dry_run and management_db_names:
+            logger.info(f"Creating ephemeral DB copies for {len(management_db_names)} databases...")
+            ephemeral_db_pool = create_ephemeral_db_copies(
+                management_db_names,
+                num_workers,
+                pg_config,
+            )
+            
+            for base_db, ephemeral_list in ephemeral_db_pool.items():
+                q = queue.Queue()
+                for ep_db in ephemeral_list:
+                    q.put(ep_db)
+                ephemeral_db_queues[base_db] = q
+        
+        # Initialize buckets
+        buckets_by_op = {op: init_bucket() for op in OPERATION_TYPES}
+        buckets_by_cat = {cat: init_bucket() for cat in CATEGORY_TYPES}
+        buckets_by_op["all"] = init_bucket()
+        buckets_by_cat["all"] = init_bucket()
+        
+        # Process samples
+        results = []
+        if dry_run or num_workers <= 1:
+            # Sequential processing
+            from tqdm import tqdm
+            for idx, (role_item, pred_item) in tqdm(
+                enumerate(zip(trial_role_dataset, trial_predictions)),
+                total=len(trial_role_dataset),
+                desc=f"Trial {trial_idx + 1}"
+            ):
+                result = evaluate_single_sample(
+                    idx, role_item, pred_item, pg_config, ephemeral_db_queues, dry_run
+                )
+                results.append(result)
+        else:
+            # Parallel processing
+            from tqdm import tqdm
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = []
+                for idx, (role_item, pred_item) in enumerate(zip(trial_role_dataset, trial_predictions)):
+                    future = executor.submit(
+                        evaluate_single_sample,
+                        idx, role_item, pred_item, pg_config, ephemeral_db_queues, dry_run
+                    )
+                    futures.append(future)
+                
+                for future in tqdm(as_completed(futures), total=len(futures), desc=f"Trial {trial_idx + 1}"):
+                    result = future.result()
+                    results.append(result)
+        
+        # Sort results by index
+        results.sort(key=lambda x: x["index"])
+        
+        # Aggregate bucket counts
+        for result in results:
+            op = result["operation"]
+            cat = result["category"]
+            classification = result["classification"]
+            
+            if classification in buckets_by_op[op]:
+                buckets_by_op[op][classification] += 1
+                buckets_by_op["all"][classification] += 1
+            if classification in buckets_by_cat[cat]:
+                buckets_by_cat[cat][classification] += 1
+                buckets_by_cat["all"][classification] += 1
+        
+        # Compute metrics for this trial
+        trial_metrics = {}
+        for op, bucket in buckets_by_op.items():
+            ac_metrics = compute_access_control_metrics(bucket)
+            sql_metrics = compute_sql_metrics(bucket)
+            trial_metrics[f"op_{op}"] = {
+                **ac_metrics,
+                **sql_metrics,
+                "bucket": bucket,
+            }
+        
+        for cat, bucket in buckets_by_cat.items():
+            ac_metrics = compute_access_control_metrics(bucket)
+            sql_metrics = compute_sql_metrics(bucket)
+            trial_metrics[f"cat_{cat}"] = {
+                **ac_metrics,
+                **sql_metrics,
+                "bucket": bucket,
+            }
+        
+        all_trials.append(trial_metrics)
+        
+        # Cleanup ephemeral databases for this trial
+        if not dry_run and ephemeral_db_pool:
+            cleanup_ephemeral_db_copies(ephemeral_db_pool, pg_config)
+            logger.info(f"Trial {trial_idx + 1} cleanup complete")
+    
+    # Aggregate results across trials
+    logger.info(f"\n{'=' * 60}")
+    logger.info("Aggregating results across trials...")
+    logger.info(f"{'=' * 60}")
+    
+    aggregated = {}
+    metric_keys = list(all_trials[0].keys())
+    
+    for key in metric_keys:
+        metrics_to_aggregate = ["ac_precision", "ac_recall", "ac_f1", "safe_ex"]
+        
+        key_metrics = {}
+        for metric in metrics_to_aggregate:
+            values = [trial[key].get(metric, 0.0) for trial in all_trials]
+            key_metrics[f"{metric}_mean"] = float(np.mean(values))
+            key_metrics[f"{metric}_std"] = float(np.std(values))
+            key_metrics[f"{metric}_min"] = float(np.min(values))
+            key_metrics[f"{metric}_max"] = float(np.max(values))
+            key_metrics[f"{metric}_trials"] = values
+        
+        key_metrics["bucket"] = all_trials[0][key]["bucket"]
+        aggregated[key] = key_metrics
+    
+    # Save detailed trial results
+    import json
+    trials_path = os.path.join(output_dir, f"{base_name}{suffix}_trials.json")
+    with open(trials_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "num_trials": num_trials,
+            "unique_instances": len(grouped),
+            "trials": all_trials,
+            "aggregated": aggregated,
+        }, f, indent=2, ensure_ascii=False)
+    logger.info(f"Detailed trial results saved to: {trials_path}")
+    
+    # Generate summary report
+    summary_path = os.path.join(output_dir, f"{base_name}{suffix}_evaluate_result.txt")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        f.write("=" * 70 + "\n")
+        f.write(f"CRUD-LEVEL RBAC EVALUATION - FAIR COMPARISON ({num_trials} TRIALS)\n")
+        f.write("=" * 70 + "\n")
+        f.write(f"Unique instances: {len(grouped)}\n")
+        f.write(f"Trials: {num_trials}\n")
+        f.write("\n")
+        
+        # Overall results
+        f.write("=" * 70 + "\n")
+        f.write("OVERALL RESULTS (MEAN ± STD)\n")
+        f.write("=" * 70 + "\n")
+        overall = aggregated["op_all"]
+        f.write(f"AC-Precision: {overall['ac_precision_mean']:.4f} ± {overall['ac_precision_std']:.4f}\n")
+        f.write(f"AC-Recall:    {overall['ac_recall_mean']:.4f} ± {overall['ac_recall_std']:.4f}\n")
+        f.write(f"AC-F1:        {overall['ac_f1_mean']:.4f} ± {overall['ac_f1_std']:.4f}\n")
+        f.write(f"SafeEX:       {overall['safe_ex_mean']:.4f} ± {overall['safe_ex_std']:.4f}\n")
+        f.write(f"Range: AC-F1 [{overall['ac_f1_min']:.4f}, {overall['ac_f1_max']:.4f}]\n")
+        
+        # Operation-level results
+        f.write("\n" + "=" * 70 + "\n")
+        f.write("BY OPERATION\n")
+        f.write("=" * 70 + "\n")
+        for op in OPERATION_TYPES:
+            if f"op_{op}" in aggregated and op != "all":
+                metrics = aggregated[f"op_{op}"]
+                f.write(f"\n{op}:\n")
+                f.write(f"  AC-F1:  {metrics['ac_f1_mean']:.4f} ± {metrics['ac_f1_std']:.4f}\n")
+                f.write(f"  SafeEX: {metrics['safe_ex_mean']:.4f} ± {metrics['safe_ex_std']:.4f}\n")
+        
+        # Category-level results
+        f.write("\n" + "=" * 70 + "\n")
+        f.write("BY CATEGORY\n")
+        f.write("=" * 70 + "\n")
+        for cat in CATEGORY_TYPES:
+            if f"cat_{cat}" in aggregated and cat != "all":
+                metrics = aggregated[f"cat_{cat}"]
+                f.write(f"\n{cat}:\n")
+                f.write(f"  AC-F1:  {metrics['ac_f1_mean']:.4f} ± {metrics['ac_f1_std']:.4f}\n")
+                f.write(f"  SafeEX: {metrics['safe_ex_mean']:.4f} ± {metrics['safe_ex_std']:.4f}\n")
+        
+        # Detailed trial results
+        f.write("\n" + "=" * 70 + "\n")
+        f.write("DETAILED TRIAL RESULTS\n")
+        f.write("=" * 70 + "\n")
+        for trial_idx, trial in enumerate(all_trials):
+            overall_metrics = trial["op_all"]
+            f.write(
+                f"Trial {trial_idx + 1} (seed={42 + trial_idx}): "
+                f"AC-F1={overall_metrics['ac_f1']:.4f}, "
+                f"SafeEX={overall_metrics['safe_ex']:.4f}\n"
+            )
+    
+    logger.info(f"Summary report saved to: {summary_path}")
+    logger.info(f"Overall AC-F1: {aggregated['op_all']['ac_f1_mean']:.4f} ± {aggregated['op_all']['ac_f1_std']:.4f}")
+    logger.info(f"Overall SafeEX: {aggregated['op_all']['safe_ex_mean']:.4f} ± {aggregated['op_all']['safe_ex_std']:.4f}")
+    
+    return {
+        "aggregated": aggregated,
+        "trials": all_trials,
+        "num_trials": num_trials,
+    }
+
+
+# ===========================================================================
 # Main Evaluation
 # ===========================================================================
 
@@ -1018,9 +1270,13 @@ def evaluate_crud_level(
     fair_comparison: bool = False,
     dry_run: bool = False,
     num_workers: int = 4,
+    num_trials: int = 5,
 ) -> Dict[str, Any]:
     """
     Evaluate CRUD-level RBAC predictions using PostgreSQL backend with ephemeral DB support.
+    
+    Args:
+        num_trials: Number of trials for fair_comparison mode (default: 5, 1 = single trial)
     """
     
     if not dry_run and not POSTGRES_AVAILABLE:
@@ -1054,23 +1310,50 @@ def evaluate_crud_level(
     role_dataset = role_dataset[:total]
     predictions = predictions[:total]
     
-    # Fair comparison: one role per question
-    eval_info = {"fair_comparison": fair_comparison}
+    # Fair comparison: one role per instance_id (original text2sql task)
+    # This ensures we evaluate the same number of samples as the original benchmark
+    eval_info = {"fair_comparison": fair_comparison, "num_trials": num_trials}
     if fair_comparison:
-        random.seed(42)
+        # Group by instance_id
         grouped = {}
         for idx, item in enumerate(role_dataset):
-            db_id = item.get("db_id", "")
-            question = item.get("question", "")
-            key = f"{db_id}||{question}"
-            grouped.setdefault(key, []).append(idx)
+            # Use instance_id as the key - this represents the original text2sql task
+            instance_id = item.get("instance_id", "")
+            if not instance_id:
+                # Fallback to db_id||question if instance_id not available
+                db_id = item.get("db_id", "")
+                question = item.get("question", "")
+                instance_id = f"{db_id}||{question}"
+            grouped.setdefault(instance_id, []).append(idx)
         
+        eval_info["unique_groups"] = len(grouped)
+        logger.info(
+            f"Fair comparison: {len(grouped)} unique instance_ids, "
+            f"running {num_trials} trial(s)"
+        )
+        
+        # Run multiple trials if requested
+        if num_trials > 1:
+            return _run_multiple_trials_crud(
+                role_dataset=role_dataset,
+                predictions=predictions,
+                grouped=grouped,
+                num_trials=num_trials,
+                pg_config=pg_config,
+                output_dir=output_dir,
+                base_name=base_name,
+                suffix=suffix,
+                dry_run=dry_run,
+                num_workers=num_workers,
+            )
+        
+        # Single trial (original behavior)
+        random.seed(42)
         selected = sorted(random.choice(indices) for indices in grouped.values())
         role_dataset = [role_dataset[i] for i in selected]
         predictions = [predictions[i] for i in selected]
-        eval_info["unique_groups"] = len(grouped)
         eval_info["selected_samples"] = len(selected)
-        logger.info(f"Fair comparison: {len(selected)} unique questions from {len(grouped)} groups")
+        logger.info(f"Selected {len(selected)} samples for evaluation")
     
     # Collect all database names
     all_db_names = set()
@@ -1399,6 +1682,8 @@ def main():
     parser.add_argument("--output_dir", default=None, help="Output directory")
     parser.add_argument("--max_samples", type=int, default=None, help="Max samples to evaluate")
     parser.add_argument("--fair_comparison", action="store_true", help="Enable fair comparison mode")
+    parser.add_argument("--num_trials", type=int, default=5,
+                        help="Number of trials for fair_comparison mode (default: 5, 1 = single trial)")
     parser.add_argument("--dry_run", action="store_true", help="Test without PostgreSQL")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of parallel workers")
     parser.add_argument("--reinit_db", action="store_true", 
@@ -1435,6 +1720,7 @@ def main():
         fair_comparison=args.fair_comparison,
         dry_run=args.dry_run,
         num_workers=args.num_workers,
+        num_trials=args.num_trials,
     )
 
 
