@@ -78,6 +78,11 @@ data/*.json
 data/*/*.json
 data/*/*/*.json
 data/selected/
+# Allow specific Column-Level RBAC datasets for reproducibility
+!data/selected/spider/column_level_rbac_dataset_spider_20251229.json
+!data/selected/spider/column_level_rbac_dataset_spider_train_20260109.json
+!data/selected/bird/column_level_rbac_dataset_bird_20251230.json
+!data/selected/livesqlbench-full/crud_rbac_dataset_v2_20251230.json.gz
 spider/
 Bird/
 
