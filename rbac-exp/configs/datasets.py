@@ -64,33 +64,3 @@ def get_dataset_config(dataset: str) -> DatasetConfig:
         raise ValueError(f"Unknown dataset: {dataset}. Supported: {list(configs.keys())}")
     
     return configs[dataset.lower()]
-
-
-# Refusal patterns for detecting model refusals
-# Note: The comprehensive list is now in data_process/response_cleaner.py
-# This is kept for backward compatibility
-REFUSAL_PATTERNS = [
-    "sorry",
-    "cannot answer",
-    "can't answer",
-    "cannot provide",
-    "can't provide",
-    "unable to answer",
-    "empty response",
-    "not enough information",
-    "no information",
-    "the provided schema",
-    "there is no column",
-    "there is no information",
-    "it seems that the information",
-    "cannot be determined",
-    "don't have permission",
-    "do not have permission",
-    "don't have access",
-    "do not have access",
-    "not authorized",
-    "access denied",
-    "permission denied",
-    "insufficient permission",
-    "no permission",
-]

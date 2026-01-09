@@ -1,0 +1,29 @@
+{
+  "column_level_rbac_spider_train": {
+    "file_name": "../../data/selected/spider/column_level_rbac_dataset_spider_train_20260109.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    },
+    "description": "Column-Level RBAC training dataset based on Spider train set (29,052 records). instruction field contains schema + column-level policy. output field is SQL for allowed, 'Sorry, I cannot answer.' for denied."
+  },
+  "column_level_rbac_spider_dev": {
+    "file_name": "../../data/selected/spider/column_level_rbac_dataset_spider_20251229.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    },
+    "description": "Column-Level RBAC dev dataset based on Spider dev set for evaluation."
+  },
+  "column_level_rbac_bird_dev": {
+    "file_name": "../../data/selected/bird/column_level_rbac_dataset_bird_20251230.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    },
+    "description": "Column-Level RBAC dev dataset based on Bird dev set for evaluation."
+  }
+}

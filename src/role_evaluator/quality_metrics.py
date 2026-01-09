@@ -867,13 +867,10 @@ class RoleQualityEvaluator:
             avg_coverage = np.mean([r["column_coverage"] for r in non_sm_roles]) if non_sm_roles else 0
             coverage_std = np.std([r["column_coverage"] for r in non_sm_roles]) if len(non_sm_roles) > 1 else 0
             
+            # Only semantic alignment issue here - diversity moved to evaluate_policy_overlap
             issues = []
             if avg_similarity < self.SIMILARITY_MIN:
                 issues.append(f"Low semantic alignment ({avg_similarity:.2f} < {self.SIMILARITY_MIN})")
-            if coverage_std < self.COVERAGE_STD_MIN and len(non_sm_roles) > 1:
-                issues.append("Low role diversity")
-            if avg_coverage > self.COVERAGE_MAX and len(non_sm_roles) > 0:
-                issues.append(f"Most roles too permissive (coverage {avg_coverage:.0%} > {self.COVERAGE_MAX:.0%})")
             
             metrics[db_id] = SemanticMetrics(
                 db_id=db_id,
@@ -987,11 +984,39 @@ class RoleQualityEvaluator:
                 max_overlap = max(o["overlap"] for o in overlaps)
                 max_pair = max(overlaps, key=lambda x: x["overlap"])
                 
-                # High overlap = roles are too similar = low diversity = redundant roles
-                # This reduces the discriminative power of the RBAC dataset
+                # Calculate coverage diversity (moved from semantic eval - no embedding needed)
+                # Coverage = fraction of total columns a role can access
+                schema_summary = self.schema_summaries.get(db_id, {}) if self.schema_summaries else {}
+                total_columns = schema_summary.get("column_count", 0)
+                table_columns = schema_summary.get("table_columns", {})
+                
+                coverages = []
+                for role in non_sm_roles:
+                    policy = role.get("policy", {})
+                    accessible = 0
+                    for table, cols in policy.items():
+                        if cols == ["*"] or cols == "*":
+                            # Find actual column count for this table (case-insensitive)
+                            for t_name, t_cols in table_columns.items():
+                                if t_name.lower() == table.lower():
+                                    accessible += t_cols
+                                    break
+                        elif isinstance(cols, list):
+                            accessible += len(cols)
+                    if total_columns > 0:
+                        coverages.append(accessible / total_columns)
+                
+                avg_coverage = np.mean(coverages) if coverages else 0
+                coverage_std = np.std(coverages) if len(coverages) > 1 else 0
+                
+                # Issues: overlap, diversity, and coverage
                 issues = []
                 if max_overlap > self.OVERLAP_MAX:
                     issues.append(f"High max overlap ({max_overlap:.0%} > {self.OVERLAP_MAX:.0%}) between {max_pair['role1']} and {max_pair['role2']} - consider differentiating these roles")
+                if coverage_std < self.COVERAGE_STD_MIN and len(coverages) > 1:
+                    issues.append(f"Low role diversity (coverage_std={coverage_std:.3f} < {self.COVERAGE_STD_MIN})")
+                if avg_coverage > self.COVERAGE_MAX and len(coverages) > 0:
+                    issues.append(f"Most roles too permissive (coverage {avg_coverage:.0%} > {self.COVERAGE_MAX:.0%})")
                 
                 metrics[db_id] = OverlapMetrics(
                     db_id=db_id,

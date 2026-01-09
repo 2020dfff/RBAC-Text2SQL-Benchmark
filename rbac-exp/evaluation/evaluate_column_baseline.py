@@ -30,13 +30,12 @@ from collections import defaultdict
 ROOT_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT_PATH)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(ROOT_PATH, "experiments", "eval"))
 
-# Import from experiments for SQL execution
+# Import from local evaluation module (migrated from experiments)
 from func_timeout import FunctionTimedOut, func_timeout
 
 try:
-    from experiments.eval.exec_eval import eval_exec_match
+    from evaluation.exec_eval import eval_exec_match
 except ImportError:
     eval_exec_match = None
 

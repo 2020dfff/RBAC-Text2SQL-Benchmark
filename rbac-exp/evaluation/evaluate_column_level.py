@@ -25,11 +25,11 @@ from func_timeout import FunctionTimedOut, func_timeout
 ROOT_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT_PATH)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# Add experiments/eval to path for parse module
-sys.path.insert(0, os.path.join(ROOT_PATH, "experiments", "eval"))
+# Add rbac-exp to path for local imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import from experiments for SQL execution
-from experiments.eval.exec_eval import eval_exec_match
+# Import from local evaluation module (migrated from experiments)
+from evaluation.exec_eval import eval_exec_match
 
 # Import metrics from rbac-exp (now aligned with experiments)
 from evaluation.metrics import (

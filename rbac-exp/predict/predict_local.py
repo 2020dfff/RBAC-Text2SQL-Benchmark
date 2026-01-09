@@ -29,12 +29,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_process.data_loader import load_dataset, RBACDataItem
 from data_process.response_cleaner import clean_model_response
 
-# Import ChatModel from experiments for model loading and template handling
-try:
-    from experiments.llm_base.chat_model import ChatModel
-    HAS_EXPERIMENTS_CHAT_MODEL = True
-except ImportError:
-    HAS_EXPERIMENTS_CHAT_MODEL = False
+# Import ChatModel from local llm_base (migrated from experiments)
+from llm_base.chat_model import ChatModel
 
 # Import prompt building utilities from rbac-exp configs
 from configs.prompts import (
@@ -112,6 +108,16 @@ def parse_args():
                         choices=["rbac", "baseline"],
                         help="Evaluation mode: 'rbac' (with RBAC prompts) or 'baseline' (Text2SQL only, no RBAC)")
     
+    # LoRA adapter configuration
+    parser.add_argument("--checkpoint_dir", type=str, default=None,
+                        help="Path to LoRA adapter checkpoint directory")
+    parser.add_argument("--finetuning_type", type=str, default="lora",
+                        choices=["lora", "full", "freeze"],
+                        help="Fine-tuning type (default: lora)")
+    parser.add_argument("--quantization_bit", type=int, default=None,
+                        choices=[4, 8],
+                        help="Quantization bits (4 or 8, None for no quantization)")
+    
     return parser.parse_args()
 
 
@@ -132,6 +138,9 @@ class LocalModelInference:
         top_p: float = 1.0,
         use_vllm: bool = False,
         tensor_parallel_size: int = 1,
+        checkpoint_dir: str = None,
+        finetuning_type: str = "lora",
+        quantization_bit: int = None,
     ):
         """
         Initialize local model using experiments ChatModel or fallback.
@@ -144,6 +153,9 @@ class LocalModelInference:
             top_p: Top-p sampling
             use_vllm: Use vLLM for inference
             tensor_parallel_size: GPU parallel size for vLLM
+            checkpoint_dir: Path to LoRA adapter checkpoint
+            finetuning_type: Fine-tuning type (lora, full, freeze)
+            quantization_bit: Quantization bits (4 or 8)
         """
         self.model_name_or_path = model_name_or_path
         self.template = template
@@ -151,16 +163,18 @@ class LocalModelInference:
         self.temperature = temperature
         self.top_p = top_p
         self.use_vllm = use_vllm
+        self.checkpoint_dir = checkpoint_dir
+        self.finetuning_type = finetuning_type
+        self.quantization_bit = quantization_bit
         
         if use_vllm:
             self._init_vllm(model_name_or_path, template, tensor_parallel_size)
-        elif HAS_EXPERIMENTS_CHAT_MODEL:
-            self._init_experiments_chat_model()
         else:
-            self._init_fallback_hf(model_name_or_path, template)
+            # Use local ChatModel from llm_base (migrated from experiments)
+            self._init_chat_model()
     
-    def _init_experiments_chat_model(self):
-        """Initialize using experiments ChatModel for consistent template handling."""
+    def _init_chat_model(self):
+        """Initialize using local llm_base ChatModel for consistent template handling."""
         import sys
         original_argv = sys.argv
         
@@ -175,9 +189,20 @@ class LocalModelInference:
                 "--predicted_out_filename", "dummy.sql",  # Required but not used
             ]
             
+            # Add adapter configuration if specified
+            if self.checkpoint_dir:
+                sys.argv.extend(["--checkpoint_dir", self.checkpoint_dir])
+                sys.argv.extend(["--finetuning_type", self.finetuning_type])
+                logger.info(f"Loading adapter from: {self.checkpoint_dir}")
+            
+            if self.quantization_bit:
+                sys.argv.extend(["--quantization_bit", str(self.quantization_bit)])
+            
             self.chat_model = ChatModel()
-            logger.info(f"Loaded model using experiments ChatModel: {self.model_name_or_path}")
+            logger.info(f"Loaded model using ChatModel: {self.model_name_or_path}")
             logger.info(f"Template: {self.template}")
+            if self.checkpoint_dir:
+                logger.info(f"Adapter: {self.checkpoint_dir}")
         finally:
             sys.argv = original_argv
     
@@ -196,32 +221,6 @@ class LocalModelInference:
             logger.info(f"Loaded vLLM model: {model_path} with tensor_parallel_size={tensor_parallel_size}")
         except ImportError:
             raise ImportError("vLLM not installed. Install with: pip install vllm")
-    
-    def _init_fallback_hf(self, model_path: str, template: str):
-        """Fallback HuggingFace initialization when experiments not available."""
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=True,
-            use_fast=True,
-        )
-        
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.tokenizer.padding_side = "left"
-        
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype="auto",
-            device_map="auto",
-            trust_remote_code=True,
-            low_cpu_mem_usage=True,
-        )
-        self.model.eval()
-        self.chat_model = None
-        logger.info(f"Loaded fallback HF model: {model_path}")
     
     def generate_single(self, query: str) -> str:
         """
@@ -395,6 +394,8 @@ def run_inference(args):
     logger.info(f"Output: {args.predicted_out_filename}")
     logger.info(f"Few-shot: {args.shot_num}")
     logger.info(f"Snowflake mode: {args.snowflake_mode}")
+    if args.checkpoint_dir:
+        logger.info(f"LoRA Adapter: {args.checkpoint_dir}")
     logger.info("=" * 60)
     
     # Initialize model
@@ -406,6 +407,9 @@ def run_inference(args):
         top_p=args.top_p,
         use_vllm=args.use_vllm,
         tensor_parallel_size=args.tensor_parallel_size,
+        checkpoint_dir=args.checkpoint_dir,
+        finetuning_type=args.finetuning_type,
+        quantization_bit=args.quantization_bit,
     )
     
     # Load dataset

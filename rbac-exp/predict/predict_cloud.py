@@ -41,12 +41,8 @@ from configs.prompts import (
     format_baseline_prompt
 )
 
-# Import response cleaner from experiments (for consistent SQL extraction)
-try:
-    from experiments.predict.response_cleaner import clean_model_response
-except ImportError:
-    # Fallback to local cleaner if experiments not available
-    from data_process.response_cleaner import clean_sql_response as clean_model_response
+# Import response cleaner from local rbac-exp (migrated from experiments)
+from data_process.response_cleaner import clean_model_response
 
 try:
     from tqdm import tqdm

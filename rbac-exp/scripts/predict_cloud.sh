@@ -27,12 +27,12 @@ load_env_file ".env" || load_env_file "../../.env" || load_env_file "../../../.e
 # Default parameters (aligned with experiments)
 PROVIDER="deepseek"
 MODEL="deepseek-reasoner"  # Will use provider default
-DATASET="spider"  # spider, bird, livesqlbench
+DATASET="livesqlbench"  # spider, bird, livesqlbench
 INPUT_FILE=""  # Will be constructed from dataset
 OUTPUT_DIR="rbac-exp/output/pred"
 MAX_SAMPLES=""  # Set to empty for all samples
 WORKERS="3"  # Use provider default
-RATE_LIMIT="2.0"
+RATE_LIMIT="0.5"  # Delay between requests (seconds)
 TEMPERATURE="0.0"
 MAX_TOKENS="4096"
 SHOT_NUM="0"  # Zero/Few-shot examples (0, 2, 4, 6)
