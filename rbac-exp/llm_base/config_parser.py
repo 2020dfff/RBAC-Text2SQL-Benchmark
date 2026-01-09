@@ -205,7 +205,22 @@ def get_train_args(
             )
 
     # postprocess model_args
-    if training_args.bf16:
+    # Check for bf16: either from training_args or DeepSpeed config
+    use_bf16 = training_args.bf16
+    if not use_bf16 and training_args.deepspeed:
+        # Check DeepSpeed config for bf16
+        import json
+        try:
+            if isinstance(training_args.deepspeed, str):
+                with open(training_args.deepspeed) as f:
+                    ds_config = json.load(f)
+            else:
+                ds_config = training_args.deepspeed
+            use_bf16 = ds_config.get("bf16", {}).get("enabled", False)
+        except:
+            pass
+    
+    if use_bf16:
         if not torch.cuda.is_bf16_supported():
             raise ValueError("Current device does not support bf16 training.")
         model_args.compute_dtype = torch.bfloat16

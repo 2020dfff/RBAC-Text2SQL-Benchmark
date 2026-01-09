@@ -23,21 +23,21 @@ TEMPLATE="chatml"                               # Options: chatml, llama2, gemma
 # DATASET CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 DATASET="column_level_rbac_spider_train"
-MAX_SAMPLES=30                                  # For testing (empty = all samples)
+MAX_SAMPLES=""                                  # Empty = all samples, or set number for testing
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAINING CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-NUM_GPUS=1                                      # Number of GPUs
-NUM_TRAIN_EPOCHS=1                              # Number of epochs
+NUM_GPUS=4                                      # Number of GPUs
+NUM_TRAIN_EPOCHS=8                              # Number of epochs
 BATCH_SIZE=1                                    # Per-device batch size
-GRADIENT_ACCUMULATION=2                         # Gradient accumulation steps
+GRADIENT_ACCUMULATION=16                        # Gradient accumulation steps
 LEARNING_RATE=2e-4                              # Learning rate
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LORA CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-LORA_RANK=16                                    # LoRA rank
+LORA_RANK=64                                    # LoRA rank
 LORA_ALPHA=32                                   # LoRA alpha
 LORA_TARGET="q_proj,v_proj"                     # Target modules
 
@@ -50,12 +50,12 @@ MAX_TARGET_LENGTH=512                           # Max output length
 # ═══════════════════════════════════════════════════════════════════════════════
 # GPU CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-export CUDA_VISIBLE_DEVICES=3                   # GPU to use
+export CUDA_VISIBLE_DEVICES=0,1,2,3             # GPUs to use
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUANTIZATION (optional)
 # ═══════════════════════════════════════════════════════════════════════════════
-QUANTIZATION_BIT=""                             # 4, 8, or empty for none
+QUANTIZATION_BIT=4                              # 4, 8, or empty for none
 
 ################################################################################
 #                         END OF CONFIGURATION                                  
@@ -99,15 +99,13 @@ echo "════════════════════════�
 START_TIME=$(date +%s)
 echo "Training started at: $(date)" | tee -a "$LOG_FILE"
 
-# Build command (single GPU, no deepspeed)
-CMD="python rbac-exp/train/sft_train.py \
-    --model_name_or_path $MODEL_NAME_OR_PATH \
+# Build base arguments
+BASE_ARGS="--model_name_or_path $MODEL_NAME_OR_PATH \
     --do_train \
     --dataset $DATASET \
     --template $TEMPLATE \
     --max_source_length $MAX_SOURCE_LENGTH \
     --max_target_length $MAX_TARGET_LENGTH \
-    --max_samples $MAX_SAMPLES \
     --finetuning_type lora \
     --lora_target $LORA_TARGET \
     --lora_rank $LORA_RANK \
@@ -118,16 +116,37 @@ CMD="python rbac-exp/train/sft_train.py \
     --per_device_train_batch_size $BATCH_SIZE \
     --gradient_accumulation_steps $GRADIENT_ACCUMULATION \
     --lr_scheduler_type cosine_with_restarts \
-    --logging_steps 5 \
+    --logging_steps 50 \
     --save_steps 2000 \
     --learning_rate $LEARNING_RATE \
     --num_train_epochs $NUM_TRAIN_EPOCHS \
-    --plot_loss \
-    --bf16"
+    --plot_loss"
 
-# Add quantization if specified
-if [ -n "$QUANTIZATION_BIT" ]; then
-    CMD="$CMD --quantization_bit $QUANTIZATION_BIT"
+# Add max_samples if specified
+if [ -n "$MAX_SAMPLES" ]; then
+    BASE_ARGS="$BASE_ARGS --max_samples $MAX_SAMPLES"
+fi
+
+# Build command based on NUM_GPUS
+if [ "$NUM_GPUS" -gt 1 ]; then
+    # Multi-GPU with DeepSpeed
+    # Note: DeepSpeed doesn't work well with quantization (QLoRA)
+    # bf16 is controlled by ds_config.json, don't pass --bf16 to avoid conflict
+    if [ -n "$QUANTIZATION_BIT" ]; then
+        echo "⚠️  Warning: Quantization (QLoRA) is disabled for multi-GPU DeepSpeed training"
+        echo "    DeepSpeed ZeRO doesn't support quantized models well"
+        echo ""
+    fi
+    CMD="deepspeed --num_gpus $NUM_GPUS rbac-exp/train/sft_train.py \
+        --deepspeed rbac-exp/configs/ds_config.json \
+        $BASE_ARGS"
+else
+    # Single GPU without DeepSpeed - can use quantization and bf16
+    BASE_ARGS="$BASE_ARGS --bf16"
+    if [ -n "$QUANTIZATION_BIT" ]; then
+        BASE_ARGS="$BASE_ARGS --quantization_bit $QUANTIZATION_BIT"
+    fi
+    CMD="python rbac-exp/train/sft_train.py $BASE_ARGS"
 fi
 
 echo ""
