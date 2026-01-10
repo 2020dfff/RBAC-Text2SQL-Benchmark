@@ -23,15 +23,15 @@ TEMPLATE="chatml"                               # Options: chatml, llama2, gemma
 # DATASET CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 DATASET="column_level_rbac_spider_train"
-MAX_SAMPLES=""                                  # Empty = all samples, or set number for testing
+MAX_SAMPLES=100                                 # Empty = all samples, or set number for testing
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAINING CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-NUM_GPUS=4                                      # Number of GPUs
-NUM_TRAIN_EPOCHS=8                              # Number of epochs
+NUM_GPUS=3                                      # Number of GPUs
+NUM_TRAIN_EPOCHS=1                              # Number of epochs
 BATCH_SIZE=1                                    # Per-device batch size
-GRADIENT_ACCUMULATION=16                        # Gradient accumulation steps
+GRADIENT_ACCUMULATION=4                         # Gradient accumulation steps
 LEARNING_RATE=2e-4                              # Learning rate
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -50,7 +50,7 @@ MAX_TARGET_LENGTH=512                           # Max output length
 # ═══════════════════════════════════════════════════════════════════════════════
 # GPU CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-export CUDA_VISIBLE_DEVICES=0,1,2,3             # GPUs to use
+export CUDA_VISIBLE_DEVICES=1,2,3               # GPUs to use
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUANTIZATION (optional)
@@ -131,7 +131,8 @@ fi
 if [ "$NUM_GPUS" -gt 1 ]; then
     # Multi-GPU with DeepSpeed
     # Note: DeepSpeed doesn't work well with quantization (QLoRA)
-    # bf16 is controlled by ds_config.json, don't pass --bf16 to avoid conflict
+    # bf16 must be passed to match ds_config.json (set to "auto")
+    BASE_ARGS="$BASE_ARGS --bf16"
     if [ -n "$QUANTIZATION_BIT" ]; then
         echo "⚠️  Warning: Quantization (QLoRA) is disabled for multi-GPU DeepSpeed training"
         echo "    DeepSpeed ZeRO doesn't support quantized models well"

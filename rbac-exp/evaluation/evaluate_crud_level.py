@@ -1030,10 +1030,18 @@ def _run_multiple_trials_crud(
 ) -> Dict[str, Any]:
     """Run multiple evaluation trials for CRUD-level RBAC and aggregate results."""
     import numpy as np
+    from datetime import datetime
     
     logger.info(f"Running {num_trials} trials with different random seeds...")
     
+    # Create timestamped output directory for this evaluation run
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    eval_run_dir = os.path.join(output_dir, f"{base_name}{suffix}_{timestamp}")
+    os.makedirs(eval_run_dir, exist_ok=True)
+    logger.info(f"Evaluation results will be saved to: {eval_run_dir}")
+    
     all_trials = []
+    all_incorrect_entries = []  # Store all incorrect entries for summary
     
     for trial_idx in range(num_trials):
         seed = 42 + trial_idx
@@ -1114,9 +1122,13 @@ def _run_multiple_trials_crud(
                     results.append(result)
         
         # Sort results by index
-        results.sort(key=lambda x: x["index"])
+        results.sort(key=lambda x: x["idx"])
         
-        # Aggregate bucket counts
+        # Open trial-specific incorrect log
+        trial_incorrect_path = os.path.join(eval_run_dir, f"trial{trial_idx+1}_incorrect.txt")
+        trial_incorrect_log = open(trial_incorrect_path, "w", encoding="utf-8")
+        
+        # Aggregate bucket counts and log incorrect cases
         for result in results:
             op = result["operation"]
             cat = result["category"]
@@ -1124,10 +1136,43 @@ def _run_multiple_trials_crud(
             
             if classification in buckets_by_op[op]:
                 buckets_by_op[op][classification] += 1
+                buckets_by_op[op]["count"] += 1
                 buckets_by_op["all"][classification] += 1
+                buckets_by_op["all"]["count"] += 1
             if classification in buckets_by_cat[cat]:
                 buckets_by_cat[cat][classification] += 1
+                buckets_by_cat[cat]["count"] += 1
                 buckets_by_cat["all"][classification] += 1
+                buckets_by_cat["all"]["count"] += 1
+            
+            # Log incorrect cases (wrong, incorrect_refusal, violation_correct, violation_wrong)
+            if classification in ("wrong", "incorrect_refusal", "violation_correct", "violation_wrong"):
+                pred_str = str(result.get("pred", ""))[:200]
+                gold_str = str(result.get("gold_sql", ""))[:200]
+                entry = {
+                    "trial": trial_idx + 1,
+                    "index": result["idx"],
+                    "instance_id": result.get("instance_id", ""),
+                    "classification": classification,
+                    "operation": op,
+                    "category": cat,
+                    "role": result.get("role", ""),
+                    "pred_sql": pred_str,
+                    "gold_sql": gold_str,
+                    "error": result.get("error", ""),
+                }
+                all_incorrect_entries.append(entry)
+                
+                trial_incorrect_log.write(
+                    f"Index: {result['idx']} | Classification: {classification} | Op: {op} | Cat: {cat}\n"
+                    f"Instance: {result.get('instance_id', '')} | Role: {result.get('role', '')}\n"
+                    f"Pred: {pred_str}...\n"
+                    f"Gold: {gold_str}...\n"
+                    f"Error: {result.get('error', '')}\n\n"
+                )
+        
+        trial_incorrect_log.close()
+        logger.info(f"Trial {trial_idx + 1} incorrect log saved to: {trial_incorrect_path}")
         
         # Compute metrics for this trial
         trial_metrics = {}
@@ -1153,7 +1198,7 @@ def _run_multiple_trials_crud(
         
         # Cleanup ephemeral databases for this trial
         if not dry_run and ephemeral_db_pool:
-            cleanup_ephemeral_db_copies(ephemeral_db_pool, pg_config)
+            drop_ephemeral_dbs(ephemeral_db_pool, pg_config)
             logger.info(f"Trial {trial_idx + 1} cleanup complete")
     
     # Aggregate results across trials
@@ -1164,24 +1209,45 @@ def _run_multiple_trials_crud(
     aggregated = {}
     metric_keys = list(all_trials[0].keys())
     
+    # Map from aggregation key names to actual metric key names
+    # compute_access_control_metrics returns: precision, recall, f1
+    # compute_sql_metrics returns: safe_ex
+    metric_name_map = {
+        "ac_precision": "precision",
+        "ac_recall": "recall", 
+        "ac_f1": "f1",
+        "safe_ex": "safe_ex",
+    }
+    
     for key in metric_keys:
         metrics_to_aggregate = ["ac_precision", "ac_recall", "ac_f1", "safe_ex"]
         
         key_metrics = {}
         for metric in metrics_to_aggregate:
-            values = [trial[key].get(metric, 0.0) for trial in all_trials]
+            actual_key = metric_name_map[metric]
+            values = [trial[key].get(actual_key, 0.0) for trial in all_trials]
             key_metrics[f"{metric}_mean"] = float(np.mean(values))
             key_metrics[f"{metric}_std"] = float(np.std(values))
             key_metrics[f"{metric}_min"] = float(np.min(values))
             key_metrics[f"{metric}_max"] = float(np.max(values))
             key_metrics[f"{metric}_trials"] = values
         
-        key_metrics["bucket"] = all_trials[0][key]["bucket"]
+        # Aggregate bucket counts across trials (mean ± std for each category)
+        bucket_keys = ["count", "correct", "wrong", "correct_refusal", "incorrect_refusal", 
+                       "violation_correct", "violation_wrong", "empty", "missing", 
+                       "sql_error", "timeout", "testcase_failed", "exec"]
+        aggregated_bucket = {}
+        for bk in bucket_keys:
+            bk_values = [trial[key]["bucket"].get(bk, 0.0) for trial in all_trials]
+            aggregated_bucket[bk] = float(np.mean(bk_values))
+            aggregated_bucket[f"{bk}_std"] = float(np.std(bk_values))
+        
+        key_metrics["bucket"] = aggregated_bucket
         aggregated[key] = key_metrics
     
     # Save detailed trial results
     import json
-    trials_path = os.path.join(output_dir, f"{base_name}{suffix}_trials.json")
+    trials_path = os.path.join(eval_run_dir, "trials.json")
     with open(trials_path, "w", encoding="utf-8") as f:
         json.dump({
             "num_trials": num_trials,
@@ -1191,62 +1257,208 @@ def _run_multiple_trials_crud(
         }, f, indent=2, ensure_ascii=False)
     logger.info(f"Detailed trial results saved to: {trials_path}")
     
-    # Generate summary report
-    summary_path = os.path.join(output_dir, f"{base_name}{suffix}_evaluate_result.txt")
-    with open(summary_path, "w", encoding="utf-8") as f:
+    # Generate aggregated incorrect file
+    agg_incorrect_path = os.path.join(eval_run_dir, "incorrect_aggregated.txt")
+    with open(agg_incorrect_path, "w", encoding="utf-8") as f:
         f.write("=" * 70 + "\n")
-        f.write(f"CRUD-LEVEL RBAC EVALUATION - FAIR COMPARISON ({num_trials} TRIALS)\n")
+        f.write(f"AGGREGATED INCORRECT CASES ({num_trials} TRIALS)\n")
         f.write("=" * 70 + "\n")
-        f.write(f"Unique instances: {len(grouped)}\n")
-        f.write(f"Trials: {num_trials}\n")
+        f.write(f"Total incorrect cases: {len(all_incorrect_entries)}\n")
         f.write("\n")
         
-        # Overall results
-        f.write("=" * 70 + "\n")
-        f.write("OVERALL RESULTS (MEAN ± STD)\n")
-        f.write("=" * 70 + "\n")
-        overall = aggregated["op_all"]
-        f.write(f"AC-Precision: {overall['ac_precision_mean']:.4f} ± {overall['ac_precision_std']:.4f}\n")
-        f.write(f"AC-Recall:    {overall['ac_recall_mean']:.4f} ± {overall['ac_recall_std']:.4f}\n")
-        f.write(f"AC-F1:        {overall['ac_f1_mean']:.4f} ± {overall['ac_f1_std']:.4f}\n")
-        f.write(f"SafeEX:       {overall['safe_ex_mean']:.4f} ± {overall['safe_ex_std']:.4f}\n")
-        f.write(f"Range: AC-F1 [{overall['ac_f1_min']:.4f}, {overall['ac_f1_max']:.4f}]\n")
+        # Group by classification
+        by_classification = {}
+        for entry in all_incorrect_entries:
+            cls = entry["classification"]
+            by_classification.setdefault(cls, []).append(entry)
         
-        # Operation-level results
-        f.write("\n" + "=" * 70 + "\n")
-        f.write("BY OPERATION\n")
-        f.write("=" * 70 + "\n")
+        for cls, entries in sorted(by_classification.items()):
+            f.write(f"\n{cls.upper()} ({len(entries)} cases):\n")
+            f.write("-" * 70 + "\n")
+            for entry in entries[:20]:  # Show first 20 of each type
+                f.write(
+                    f"Trial {entry['trial']} | Index {entry['index']} | "
+                    f"Op: {entry['operation']} | Cat: {entry['category']}\n"
+                    f"Instance: {entry['instance_id']} | Role: {entry['role']}\n"
+                    f"Pred: {entry['pred_sql'][:150]}...\n"
+                    f"Gold: {entry['gold_sql'][:150]}...\n"
+                    f"Error: {entry['error']}\n\n"
+                )
+            if len(entries) > 20:
+                f.write(f"... and {len(entries) - 20} more cases\n")
+    
+    logger.info(f"Aggregated incorrect file saved to: {agg_incorrect_path}")
+    
+    # Generate summary report
+    summary_path = os.path.join(eval_run_dir, "evaluation_summary.txt")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        f.write("LIVESQLBENCH CRUD-LEVEL RBAC EVALUATION - FAIR COMPARISON\n")
+        f.write("=" * 80 + "\n")
+        f.write(f"NOTE: Fair comparison mode ({num_trials} trials, random sampling per trial).\n")
+        f.write(f"Unique instances: {len(grouped)}\n")
+        f.write(f"Results directory: {eval_run_dir}\n")
+        f.write("\n")
+        
+        # Six-Category Results by Operation (like Bird's per-difficulty)
+        f.write("Six-Category Results by Operation (Mean ± Std across trials)\n")
+        f.write("-" * 80 + "\n")
+        f.write(f"{'Operation':<12} {'Count':<10} {'Correct':<12} {'Wrong':<12} {'CR':<12} {'IR':<12} {'VC':<12} {'VW':<12}\n")
+        f.write("-" * 80 + "\n")
+        
+        # Calculate mean counts per operation from first trial's buckets (counts are same across trials)
+        for op in OPERATION_TYPES:
+            if f"op_{op}" in aggregated and op != "all":
+                bucket = aggregated[f"op_{op}"]["bucket"]
+                count = bucket["count"]
+                if count > 0:
+                    f.write(
+                        f"{op:<12} {count:<10.1f} {bucket['correct']:<12.1f} {bucket['wrong']:<12.1f} "
+                        f"{bucket['correct_refusal']:<12.1f} {bucket['incorrect_refusal']:<12.1f} "
+                        f"{bucket['violation_correct']:<12.1f} {bucket['violation_wrong']:<12.1f}\n"
+                    )
+        
+        # Overall row
+        overall_bucket = aggregated["op_all"]["bucket"]
+        f.write("-" * 80 + "\n")
+        f.write(
+            f"{'all':<12} {overall_bucket['count']:<10.1f} {overall_bucket['correct']:<12.1f} {overall_bucket['wrong']:<12.1f} "
+            f"{overall_bucket['correct_refusal']:<12.1f} {overall_bucket['incorrect_refusal']:<12.1f} "
+            f"{overall_bucket['violation_correct']:<12.1f} {overall_bucket['violation_wrong']:<12.1f}\n"
+        )
+        f.write("\n")
+        
+        # Overall Summary
+        f.write("OVERALL SUMMARY (Averaged across trials)\n")
+        f.write("-" * 80 + "\n")
+        total_samples = overall_bucket['count']
+        positive_samples = overall_bucket['correct'] + overall_bucket['wrong'] + overall_bucket['incorrect_refusal']
+        negative_samples = overall_bucket['correct_refusal'] + overall_bucket['violation_correct'] + overall_bucket['violation_wrong']
+        f.write(f"Total samples: {total_samples:.1f}\n")
+        f.write(f"Positive samples (allowed): {positive_samples:.1f}\n")
+        f.write(f"Negative samples (denied): {negative_samples:.1f}\n")
+        f.write("\n")
+        f.write(
+            f"Six-category counts (C/W/CR/IR/VC/VW): "
+            f"{overall_bucket['correct']:.1f} / {overall_bucket['wrong']:.1f} / "
+            f"{overall_bucket['correct_refusal']:.1f} / {overall_bucket['incorrect_refusal']:.1f} / "
+            f"{overall_bucket['violation_correct']:.1f} / {overall_bucket['violation_wrong']:.1f}\n"
+        )
+        f.write("\n")
+        
+        # Access Control Metrics
+        overall = aggregated["op_all"]
+        f.write("ACCESS CONTROL METRICS (Mean ± Std)\n")
+        f.write("-" * 80 + "\n")
+        tp = overall_bucket['correct'] + overall_bucket['wrong']
+        fp = overall_bucket['violation_correct'] + overall_bucket['violation_wrong']
+        fn = overall_bucket['incorrect_refusal']
+        tn = overall_bucket['correct_refusal']
+        f.write(f"TP/FP/FN/TN: {tp:.1f} / {fp:.1f} / {fn:.1f} / {tn:.1f}\n")
+        f.write(
+            f"Precision: {overall['ac_precision_mean']:.4f} ± {overall['ac_precision_std']:.4f}  |  "
+            f"Recall: {overall['ac_recall_mean']:.4f} ± {overall['ac_recall_std']:.4f}  |  "
+            f"AC-F1: {overall['ac_f1_mean']:.4f} ± {overall['ac_f1_std']:.4f}\n"
+        )
+        # Calculate VR and ORR from first trial metrics
+        first_trial = all_trials[0]["op_all"]
+        vr_values = [trial["op_all"].get("violation_rate", 0.0) for trial in all_trials]
+        orr_values = [trial["op_all"].get("over_refusal_rate", 0.0) for trial in all_trials]
+        vr_mean, vr_std = float(np.mean(vr_values)), float(np.std(vr_values))
+        orr_mean, orr_std = float(np.mean(orr_values)), float(np.std(orr_values))
+        f.write(f"Violation Rate: {vr_mean:.4f} ± {vr_std:.4f}  |  Over-Refusal Rate: {orr_mean:.4f} ± {orr_std:.4f}\n")
+        f.write("\n")
+        
+        # SQL Performance Metrics
+        f.write("SQL PERFORMANCE METRICS (Mean ± Std)\n")
+        f.write("-" * 80 + "\n")
+        sql_attempts = overall_bucket['correct'] + overall_bucket['wrong'] + overall_bucket['violation_correct'] + overall_bucket['violation_wrong']
+        correct_sql = overall_bucket['correct'] + overall_bucket['violation_correct']
+        # Get sql_accuracy from trials
+        sql_acc_values = [trial["op_all"].get("sql_accuracy", 0.0) for trial in all_trials]
+        sql_acc_mean, sql_acc_std = float(np.mean(sql_acc_values)), float(np.std(sql_acc_values))
+        f.write(f"SQL-emitting: {sql_attempts:.1f}  |  CorrectSQL: {correct_sql:.1f}  |  SQL-Accuracy: {sql_acc_mean:.4f} ± {sql_acc_std:.4f}\n")
+        f.write(f"SafeEX: {overall['safe_ex_mean']:.4f} ± {overall['safe_ex_std']:.4f}  (= correct / positive_samples = {overall_bucket['correct']:.1f} / {positive_samples:.1f})\n")
+        f.write("\n")
+        
+        # Per-Operation Metrics Table (like Bird's per-difficulty)
+        f.write("PER-OPERATION METRICS (Mean ± Std)\n")
+        f.write("-" * 80 + "\n")
+        f.write(f"{'Operation':<12} {'Count':<10} {'Pos':<8} {'Precision':<16} {'Recall':<16} {'AC-F1':<16} {'SafeEX':<12}\n")
+        f.write("-" * 80 + "\n")
+        
         for op in OPERATION_TYPES:
             if f"op_{op}" in aggregated and op != "all":
                 metrics = aggregated[f"op_{op}"]
-                f.write(f"\n{op}:\n")
-                f.write(f"  AC-F1:  {metrics['ac_f1_mean']:.4f} ± {metrics['ac_f1_std']:.4f}\n")
-                f.write(f"  SafeEX: {metrics['safe_ex_mean']:.4f} ± {metrics['safe_ex_std']:.4f}\n")
+                bucket = metrics["bucket"]
+                count = bucket["count"]
+                if count > 0:
+                    pos = bucket['correct'] + bucket['wrong'] + bucket['incorrect_refusal']
+                    # Get precision/recall from trials
+                    prec_values = [trial[f"op_{op}"].get("precision", 0.0) for trial in all_trials]
+                    rec_values = [trial[f"op_{op}"].get("recall", 0.0) for trial in all_trials]
+                    prec_mean, prec_std = float(np.mean(prec_values)), float(np.std(prec_values))
+                    rec_mean, rec_std = float(np.mean(rec_values)), float(np.std(rec_values))
+                    f.write(
+                        f"{op:<12} {count:<10.1f} {pos:<8.1f} "
+                        f"{prec_mean:.4f}±{prec_std:.4f} "
+                        f"{rec_mean:.4f}±{rec_std:.4f} "
+                        f"{metrics['ac_f1_mean']:.4f}±{metrics['ac_f1_std']:.4f} "
+                        f"{metrics['safe_ex_mean']:.4f}±{metrics['safe_ex_std']:.4f}\n"
+                    )
         
-        # Category-level results
-        f.write("\n" + "=" * 70 + "\n")
-        f.write("BY CATEGORY\n")
-        f.write("=" * 70 + "\n")
+        f.write("-" * 80 + "\n")
+        pos_all = overall_bucket['correct'] + overall_bucket['wrong'] + overall_bucket['incorrect_refusal']
+        f.write(
+            f"{'all':<12} {overall_bucket['count']:<10.1f} {pos_all:<8.1f} "
+            f"{overall['ac_precision_mean']:.4f}±{overall['ac_precision_std']:.4f} "
+            f"{overall['ac_recall_mean']:.4f}±{overall['ac_recall_std']:.4f} "
+            f"{overall['ac_f1_mean']:.4f}±{overall['ac_f1_std']:.4f} "
+            f"{overall['safe_ex_mean']:.4f}±{overall['safe_ex_std']:.4f}\n"
+        )
+        f.write("\n")
+        
+        # Per-Category Metrics Table
+        f.write("PER-CATEGORY METRICS (Mean ± Std)\n")
+        f.write("-" * 80 + "\n")
+        f.write(f"{'Category':<12} {'Count':<10} {'Pos':<8} {'Precision':<16} {'Recall':<16} {'AC-F1':<16} {'SafeEX':<12}\n")
+        f.write("-" * 80 + "\n")
+        
         for cat in CATEGORY_TYPES:
             if f"cat_{cat}" in aggregated and cat != "all":
                 metrics = aggregated[f"cat_{cat}"]
-                f.write(f"\n{cat}:\n")
-                f.write(f"  AC-F1:  {metrics['ac_f1_mean']:.4f} ± {metrics['ac_f1_std']:.4f}\n")
-                f.write(f"  SafeEX: {metrics['safe_ex_mean']:.4f} ± {metrics['safe_ex_std']:.4f}\n")
+                bucket = metrics["bucket"]
+                count = bucket["count"]
+                if count > 0:
+                    pos = bucket['correct'] + bucket['wrong'] + bucket['incorrect_refusal']
+                    # Get precision/recall from trials
+                    prec_values = [trial[f"cat_{cat}"].get("precision", 0.0) for trial in all_trials]
+                    rec_values = [trial[f"cat_{cat}"].get("recall", 0.0) for trial in all_trials]
+                    prec_mean, prec_std = float(np.mean(prec_values)), float(np.std(prec_values))
+                    rec_mean, rec_std = float(np.mean(rec_values)), float(np.std(rec_values))
+                    f.write(
+                        f"{cat:<12} {count:<10.1f} {pos:<8.1f} "
+                        f"{prec_mean:.4f}±{prec_std:.4f} "
+                        f"{rec_mean:.4f}±{rec_std:.4f} "
+                        f"{metrics['ac_f1_mean']:.4f}±{metrics['ac_f1_std']:.4f} "
+                        f"{metrics['safe_ex_mean']:.4f}±{metrics['safe_ex_std']:.4f}\n"
+                    )
+        f.write("\n")
         
-        # Detailed trial results
-        f.write("\n" + "=" * 70 + "\n")
+        # Detailed Trial Results
         f.write("DETAILED TRIAL RESULTS\n")
-        f.write("=" * 70 + "\n")
+        f.write("-" * 80 + "\n")
         for trial_idx, trial in enumerate(all_trials):
             overall_metrics = trial["op_all"]
             f.write(
                 f"Trial {trial_idx + 1} (seed={42 + trial_idx}): "
-                f"AC-F1={overall_metrics['ac_f1']:.4f}, "
-                f"SafeEX={overall_metrics['safe_ex']:.4f}\n"
+                f"AC-F1={overall_metrics['f1']:.4f}, "
+                f"SafeEX={overall_metrics['safe_ex']:.4f}, "
+                f"VR={overall_metrics.get('violation_rate', 0.0):.4f}, "
+                f"ORR={overall_metrics.get('over_refusal_rate', 0.0):.4f}\n"
             )
     
     logger.info(f"Summary report saved to: {summary_path}")
+    logger.info(f"Evaluation results directory: {eval_run_dir}")
     logger.info(f"Overall AC-F1: {aggregated['op_all']['ac_f1_mean']:.4f} ± {aggregated['op_all']['ac_f1_std']:.4f}")
     logger.info(f"Overall SafeEX: {aggregated['op_all']['safe_ex_mean']:.4f} ± {aggregated['op_all']['safe_ex_std']:.4f}")
     
@@ -1254,6 +1466,7 @@ def _run_multiple_trials_crud(
         "aggregated": aggregated,
         "trials": all_trials,
         "num_trials": num_trials,
+        "eval_run_dir": eval_run_dir,
     }
 
 

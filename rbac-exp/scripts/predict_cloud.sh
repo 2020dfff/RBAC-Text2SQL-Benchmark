@@ -25,19 +25,19 @@ load_env_file() {
 load_env_file ".env" || load_env_file "../../.env" || load_env_file "../../../.env" || true
 
 # Default parameters (aligned with experiments)
-PROVIDER="deepseek"
-MODEL="deepseek-reasoner"  # Will use provider default
-DATASET="livesqlbench"  # spider, bird, livesqlbench
+PROVIDER="openai"  # Options: openai, anthropic, deepseek, deepinfra, gemini
+MODEL="gpt-4o-mini"  # Will use provider default
+DATASET="bird"  # spider, bird, livesqlbench
 INPUT_FILE=""  # Will be constructed from dataset
 OUTPUT_DIR="rbac-exp/output/pred"
 MAX_SAMPLES=""  # Set to empty for all samples
-WORKERS="3"  # Use provider default
+WORKERS="30"  # Use provider default
 RATE_LIMIT="0.5"  # Delay between requests (seconds)
 TEMPERATURE="0.0"
 MAX_TOKENS="4096"
 SHOT_NUM="0"  # Zero/Few-shot examples (0, 2, 4, 6)
 STRUCTURED="true"  # Use structured prompt format
-MODE="baseline"  # Evaluation mode: rbac or baseline
+MODE="rbac"  # Evaluation mode: rbac or baseline
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

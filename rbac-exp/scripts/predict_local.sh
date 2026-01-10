@@ -11,14 +11,15 @@ MODEL="Snowflake/Arctic-Text2SQL-R1-7B"         # HuggingFace model name or loca
 TEMPLATE="chatml"                               # Options: chatml, llama2, gemma, default
 
 # LoRA Adapter Configuration (leave empty for base model)
-LORA_ADAPTER="rbac-exp/output/adapter/arctic-text2sql-r1-7b-column-rbac-test"
+# LORA_ADAPTER="rbac-exp/output/adapter/arctic-text2sql-r1-7b-column-rbac-test"
+LORA_ADAPTER=""                                 # Path to LoRA adapter directory
 FINETUNING_TYPE="lora"                          # Options: lora, full, freeze
 QUANTIZATION_BIT=""                             # Options: 4, 8, or empty for none
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATASET CONFIGURATION  
 # ═══════════════════════════════════════════════════════════════════════════════
-DATASET="spider"                                # Options: spider, bird, livesqlbench
+DATASET="bird"                                # Options: spider, bird, livesqlbench
 
 # Dataset file paths
 SPIDER_DATASET="outputs/column_level_rbac_dataset_spider_20251229.json"
@@ -36,7 +37,7 @@ TOP_P=1.0                                       # Nucleus sampling threshold
 # ═══════════════════════════════════════════════════════════════════════════════
 # GPU CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-CUDA_DEVICES="0,1,2"                          # GPUs to use (comma-separated)
+CUDA_DEVICES="0,1,2,3"                          # GPUs to use (comma-separated)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CHECKPOINT & RESUME
@@ -47,7 +48,7 @@ ENABLE_RESUME=true                              # Resume from checkpoint if exis
 # ═══════════════════════════════════════════════════════════════════════════════
 # EVALUATION MODE
 # ═══════════════════════════════════════════════════════════════════════════════
-MODE="rbac"                                     # Options: rbac, baseline
+MODE="baseline"                                     # Options: rbac, baseline
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SAMPLE LIMIT (for testing, empty = all samples)

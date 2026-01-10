@@ -14,12 +14,13 @@ RBAC_EXP_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$RBAC_EXP_DIR")"
 
 # Default values
-PREDICTION_PATH=""
+PREDICTION_PATH="rbac-exp/output/pred/final/rbac-result/pred_gpt-5-mini_spider_structured_rbac.sql"
 DATASET="spider"
 ROLE_JSON=""
 EXECUTE_SQL="true"
-FAIR_COMPARISON="false"
+FAIR_COMPARISON="true"
 NUM_TRIALS="5"
+NUM_WORKERS="8"
 OUTPUT_DIR=""
 
 # Parse command line arguments
@@ -51,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --num_trials)
             NUM_TRIALS="$2"
+            shift 2
+            ;;
+        --num_workers)
+            NUM_WORKERS="$2"
             shift 2
             ;;
         --help)
@@ -139,16 +144,27 @@ fi
 echo "Evaluation script: $EVAL_SCRIPT"
 echo "========================================="
 
-# Build command
-CMD="python $EVAL_SCRIPT \
-    --prediction_path \"$PREDICTION_PATH\" \
-    --dataset $DATASET \
-    --role_json \"$ROLE_JSON\" \
-    --output_path \"$OUTPUT_DIR\""
-
-# Add execute_sql flag
-if [ "$EXECUTE_SQL" = "false" ]; then
-    CMD="$CMD --no_execute_sql"
+# Build command based on dataset type
+if [ "$DATASET" = "livesqlbench" ]; then
+    # CRUD-level evaluation (livesqlbench) - use module syntax
+    CMD="python -m rbac-exp.evaluation.evaluate_crud_level \
+        --prediction_path \"$PREDICTION_PATH\" \
+        --role_json \"$ROLE_JSON\" \
+        --db_user feiy \
+        --db_password REDACTED \
+        --num_workers $NUM_WORKERS"
+else
+    # Column-level evaluation (spider, bird)
+    CMD="python -m rbac-exp.evaluation.evaluate_column_level \
+        --prediction_path \"$PREDICTION_PATH\" \
+        --dataset $DATASET \
+        --role_json \"$ROLE_JSON\" \
+        --output_path \"$OUTPUT_DIR\""
+    
+    # Add execute_sql flag (column-level only)
+    if [ "$EXECUTE_SQL" = "false" ]; then
+        CMD="$CMD --no_execute_sql"
+    fi
 fi
 
 # Add fair_comparison flag and num_trials
