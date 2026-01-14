@@ -26,18 +26,21 @@ load_env_file ".env" || load_env_file "../../.env" || load_env_file "../../../.e
 
 # Default parameters (aligned with experiments)
 PROVIDER="openai"  # Options: openai, anthropic, deepseek, deepinfra, gemini
-MODEL="gpt-4o-mini"  # Will use provider default
-DATASET="bird"  # spider, bird, livesqlbench
+MODEL="qwen2.5-coder-7b-instruct"
+# MODEL="google/gemma-3-4b-it"  # Will use provider default
+DATASET="spider"  # spider, bird, livesqlbench
 INPUT_FILE=""  # Will be constructed from dataset
 OUTPUT_DIR="rbac-exp/output/pred"
 MAX_SAMPLES=""  # Set to empty for all samples
-WORKERS="30"  # Use provider default
-RATE_LIMIT="0.5"  # Delay between requests (seconds)
+WORKERS="40"  # DeepInfra supports high concurrency
+RATE_LIMIT="0.1"  # Delay between requests (seconds)
 TEMPERATURE="0.0"
 MAX_TOKENS="4096"
 SHOT_NUM="0"  # Zero/Few-shot examples (0, 2, 4, 6)
 STRUCTURED="true"  # Use structured prompt format
 MODE="rbac"  # Evaluation mode: rbac or baseline
+ENABLE_RESUME="true"  # Resume from checkpoint if interrupted
+SAVE_EVERY=50  # Save checkpoint every N samples
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -130,7 +133,7 @@ fi
 if [[ -z "$INPUT_FILE" ]]; then
     case $DATASET in
         spider)
-            INPUT_FILE="data/selected/spider/column_level_rbac_dataset_spider_20251229.json"
+            INPUT_FILE="data/selected/spider/column_level_rbac_dataset_spider_20260113.json"
             ;;
         bird)
             INPUT_FILE="data/selected/bird/column_level_rbac_dataset_bird_20251230.json"
@@ -255,6 +258,11 @@ fi
 
 # Add mode parameter
 CMD="$CMD --mode \"$MODE\""
+
+# Add resume and checkpoint parameters
+if [[ "$ENABLE_RESUME" == "true" ]]; then
+    CMD="$CMD --resume --save_every $SAVE_EVERY"
+fi
 
 # Execute prediction
 echo "$(date): Executing: $CMD" | tee -a "$LOG_FILE"

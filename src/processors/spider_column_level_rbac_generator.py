@@ -1054,18 +1054,23 @@ class SpiderColumnLevelRBACGenerator:
         return valid_dbs
     
     def get_schema(self, db_id: str) -> Dict[str, List[str]]:
-        """Get schema for a database, with caching."""
+        """Get schema for a database, with caching.
+        
+        Prioritizes SQLite database as the authoritative source to avoid
+        schema.sql parsing issues (e.g., missing columns with inline PRIMARY KEY).
+        """
         if db_id in self._schema_cache:
             return self._schema_cache[db_id]
         
-        # Try to parse from schema.sql first
-        schema_path = self.get_schema_path(db_id)
-        schema = parse_schema_sql(schema_path)
+        # Prioritize SQLite database as the authoritative source
+        # schema.sql parsing has known issues (e.g., skipping columns with inline PRIMARY KEY)
+        db_path = self.get_db_path(db_id)
+        schema = get_schema_from_db(db_path)
         
-        # Fallback to SQLite if schema.sql parsing fails
+        # Fallback to schema.sql only if SQLite fails
         if not schema:
-            db_path = self.get_db_path(db_id)
-            schema = get_schema_from_db(db_path)
+            schema_path = self.get_schema_path(db_id)
+            schema = parse_schema_sql(schema_path)
         
         self._schema_cache[db_id] = schema
         return schema

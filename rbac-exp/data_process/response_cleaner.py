@@ -49,7 +49,16 @@ REFUSAL_PATTERNS = (
     "sorry",
     "cannot answer",
     "can't answer",
+    "cannot provide",
+    "can't provide",
+    "cannot assist",
+    "can't assist",
+    "cannot help",
+    "can't help",
     "unable to answer",
+    "unable to provide",
+    "unable to assist",
+    "unable to help",
     "empty response",
     "not enough information",
     "no information",
@@ -67,6 +76,9 @@ REFUSAL_PATTERNS = (
     "permission denied",
     "insufficient permission",
     "no permission",
+    "i apologize",
+    "i'm sorry",
+    "i am sorry",
 )
 
 # Code block patterns (from experiments/predict/response_cleaner.py)
@@ -144,11 +156,18 @@ def clean_model_response(response: str, *, mode: str = "default") -> str:
         response: Raw model output text.
         mode: Cleaning mode. "default" preserves legacy behaviour, while
             "snowflake" enables heuristics tailored for Snowflake outputs.
+    
+    Returns:
+        Cleaned SQL string, "Sorry, I cannot answer." for refusals, 
+        or "empty response" for invalid/empty output.
     """
     if not response:
-        return ""
+        return "empty response"
 
     text = response.strip()
+    if not text:
+        return "empty response"
+    
     if text.startswith("Error:"):
         return text
 
@@ -187,7 +206,26 @@ def clean_model_response(response: str, *, mode: str = "default") -> str:
     cleaned = " ".join(lines).strip()
     cleaned = re.sub(r"`{3,}", "", cleaned)
 
-    return cleaned.strip()
+    # Handle llama-3-sqlcoder issue: remove standalone "assistant" word and everything after
+    # This fixes cases like: "SELECT * FROM t;assistant I am looking for..."
+    # Match "assistant" that is not part of an identifier (e.g., not "teaching_assistant")
+    assistant_match = re.search(r'(?<![a-zA-Z_])assistant\b', cleaned, re.IGNORECASE)
+    if assistant_match:
+        cleaned = cleaned[:assistant_match.start()].strip()
+    
+    # Validate that the result looks like SQL - must start with a SQL keyword
+    keyword_regex = re.compile(r"^\s*(" + "|".join(SQL_KEYWORDS) + r")\b", re.IGNORECASE)
+    if cleaned and keyword_regex.match(cleaned):
+        # Valid SQL found - return it
+        return cleaned.strip()
+    
+    # No valid SQL found - check if this is a refusal response
+    lowered = text.lower()
+    if any(pattern in lowered for pattern in REFUSAL_PATTERNS):
+        return "Sorry, I cannot answer."
+    
+    # Not valid SQL and not a recognized refusal - return "empty response"
+    return "empty response"
 
 
 # =============================================================================
@@ -206,11 +244,20 @@ def _strip_trailing_explanation(candidate: str) -> str:
     """Remove trailing explanations from SQL."""
     trimmed = candidate
     
-    # Handle llama-3-sqlcoder issue: remove standalone "assistant" word
-    pattern = r'(?<!_)assistant:?\s+(?=I[\'\s]|The |This |Can |What |How |Why |Sorry |Please )'
-    match = re.search(pattern, trimmed, re.IGNORECASE)
+    # Handle llama-3-sqlcoder issue: remove standalone "assistant" word and everything after
+    # The pattern matches "assistant" (optionally followed by colon) as a standalone word,
+    # not part of another identifier (e.g., "teaching_assistant")
+    # This handles cases like: "SELECT * FROM t;assistant I am looking for..."
+    assistant_pattern = r'(?<![a-zA-Z_])assistant:?\s*(?=[A-Z]|I[\'\s]|[A-Z][a-z]|from |to |$)'
+    match = re.search(assistant_pattern, trimmed, re.IGNORECASE)
     if match:
         trimmed = trimmed[:match.start()].strip()
+    
+    # Also handle case where "assistant" appears right after semicolon
+    # e.g., "SELECT * FROM t;assistant..." -> "SELECT * FROM t;"
+    semicolon_assistant = re.search(r';(\s*)assistant\b', trimmed, re.IGNORECASE)
+    if semicolon_assistant:
+        trimmed = trimmed[:semicolon_assistant.start() + 1].strip()
     
     for marker in EXPLANATION_MARKERS:
         idx = trimmed.lower().find(marker)

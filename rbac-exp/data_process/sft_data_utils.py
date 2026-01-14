@@ -408,6 +408,44 @@ register_template(
     stop_words=["<end_of_turn>", "<eos>"],
 )
 
+r"""
+Supports: https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+          https://huggingface.co/defog/llama-3-sqlcoder-8b
+Llama 3 uses a new chat format with special tokens:
+<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+{user_message}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+"""
+register_template(
+    name="llama3",
+    prefix=[
+        {"token": "<|begin_of_text|>"},
+        {"token": "<|start_header_id|>"},
+        "system",
+        {"token": "<|end_header_id|>"},
+        "\n\n",
+        "{{system}}",
+        {"token": "<|eot_id|>"},
+    ],
+    prompt=[
+        {"token": "<|start_header_id|>"},
+        "user",
+        {"token": "<|end_header_id|>"},
+        "\n\n",
+        "{{query}}",
+        {"token": "<|eot_id|>"},
+        {"token": "<|start_header_id|>"},
+        "assistant",
+        {"token": "<|end_header_id|>"},
+        "\n\n",
+    ],
+    system="You are a helpful assistant.",
+    sep=[],
+    stop_words=["<|eot_id|>", "<|end_of_text|>"],
+)
+
 
 # =============================================================================
 # Preprocessing Functions

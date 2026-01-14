@@ -13,6 +13,7 @@ import json
 import argparse
 import logging
 import time
+import threading
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -102,6 +103,10 @@ def parse_args():
                         help="Number of concurrent workers (default: provider default)")
     parser.add_argument("--rate_limit", type=float, default=1.0,
                         help="Rate limit delay between requests (seconds)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from checkpoint if exists")
+    parser.add_argument("--save_every", type=int, default=50,
+                        help="Save checkpoint every N samples")
     
     return parser.parse_args()
 
@@ -114,6 +119,7 @@ class ProgressTracker:
         self.completed = 0
         self.errors = 0
         self.start_time = time.time()
+        self._lock = threading.Lock()  # Thread safety
         
         if tqdm is not None:
             self.pbar = tqdm(total=total, desc="Processing", unit="sample")
@@ -122,11 +128,12 @@ class ProgressTracker:
             logger.info(f"Processing {total} samples...")
     
     def update(self, success: bool = True):
-        self.completed += 1
-        if not success:
-            self.errors += 1
-        if self.pbar:
-            self.pbar.update(1)
+        with self._lock:
+            self.completed += 1
+            if not success:
+                self.errors += 1
+            if self.pbar:
+                self.pbar.update(1)
     
     def close(self):
         if self.pbar:
@@ -273,41 +280,87 @@ def run_inference(args) -> Dict[str, Any]:
         os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Output will be saved to: {output_path}")
     
-    # Initialize progress tracking
-    progress = ProgressTracker(len(items))
+    # Checkpoint handling for resume
+    checkpoint_path = output_path.replace(".sql", "_checkpoint.json")
+    completed_indices = set()
     results_dict: Dict[int, str] = {}  # index -> raw response
+    checkpoint_lock = threading.Lock()  # Thread-safe checkpoint access
+    
+    if args.resume and os.path.exists(checkpoint_path):
+        try:
+            with open(checkpoint_path, "r") as f:
+                checkpoint_data = json.load(f)
+            for entry in checkpoint_data:
+                idx = entry["index"]
+                completed_indices.add(idx)
+                results_dict[idx] = entry["response"]
+            logger.info(f"Resumed from checkpoint: {len(completed_indices)} samples already done")
+        except Exception as e:
+            logger.warning(f"Failed to load checkpoint: {e}, starting fresh")
+    
+    # Filter out already completed samples
+    pending_indices = [i for i in range(len(items)) if i not in completed_indices]
+    logger.info(f"Pending samples: {len(pending_indices)} / {len(items)}")
+    
+    # Initialize progress tracking
+    progress = ProgressTracker(len(pending_indices))
     start_time = time.time()
     
+    def save_checkpoint():
+        """Save current progress to checkpoint file (thread-safe)."""
+        with checkpoint_lock:
+            checkpoint_data = [{"index": idx, "response": resp} for idx, resp in results_dict.items()]
+            with open(checkpoint_path, "w") as f:
+                json.dump(checkpoint_data, f, ensure_ascii=False)
+            logger.info(f"Checkpoint saved: {len(results_dict)} samples")
+    
+    def process_single(idx: int) -> Tuple[int, str, bool]:
+        """Process a single item and return (index, response, success)."""
+        prompt = prompts[idx]
+        try:
+            response = client.call(
+                prompt,
+                rate_limit_delay=args.rate_limit,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+            )
+            return (idx, response, True)
+        except Exception as e:
+            logger.error(f"Error processing item {idx}: {e}")
+            return (idx, f"Error: {str(e)}", False)
+    
+    completed_since_save = 0
+    
     try:
-        # Run concurrent predictions
+        # Run predictions with ThreadPoolExecutor for parallel execution
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {}
-            for idx, prompt in enumerate(prompts):
-                future = executor.submit(
-                    client.call,
-                    prompt,
-                    rate_limit_delay=args.rate_limit,
-                    max_tokens=args.max_tokens,
-                    temperature=args.temperature,
-                )
-                futures[future] = idx
+            futures = {executor.submit(process_single, idx): idx for idx in pending_indices}
             
             for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    response = future.result()
+                idx, response, success = future.result()
+                
+                # Thread-safe update of results
+                with checkpoint_lock:
                     results_dict[idx] = response
-                    progress.update(success=True)
-                except Exception as e:
-                    logger.error(f"Error processing item {idx}: {e}")
-                    results_dict[idx] = f"Error: {str(e)}"
-                    progress.update(success=False)
+                    completed_since_save += 1
+                
+                progress.update(success=success)
+                
+                # Save checkpoint periodically (thread-safe)
+                if completed_since_save >= args.save_every:
+                    save_checkpoint()
+                    with checkpoint_lock:
+                        completed_since_save = 0
                     
     except KeyboardInterrupt:
-        logger.warning("Received interrupt signal, stopping...")
+        logger.warning("Received interrupt signal, saving checkpoint...")
+        save_checkpoint()
         return {"error": "Interrupted by user"}
     finally:
         progress.close()
+        # Final checkpoint save
+        if results_dict:
+            save_checkpoint()
     
     # Reorder results by index
     raw_results = []

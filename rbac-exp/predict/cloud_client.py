@@ -28,12 +28,36 @@ class APIConfig:
 
 # Provider configurations
 PROVIDERS: Dict[str, APIConfig] = {
-    "openai": APIConfig(
-        url="https://api.openai.com/v1/chat/completions",
-        key_env="OPENAI_API_KEY",
-        default_model="gpt-4o-mini",
+    # "openai": APIConfig(
+    #     url="https://api.openai.com/v1/chat/completions",
+    #     key_env="OPENAI_API_KEY",
+    #     default_model="gpt-4o-mini",
+    #     default_workers=3,
+    # ),
+    # "openai": APIConfig(
+    #     url="https://aiberm.com/v1/chat/completions",
+    #     key_env="GEMINI_3rd_PARTY_API_KEY",
+    #     default_model="gemini-2.5-flash",
+    #     default_workers=3,
+    # ),
+    # "openai": APIConfig(
+    #     url="https://aiberm.com/v1/chat/completions",
+    #     key_env="ANTHROPIC_3rd_PARTY_API_KEY",
+    #     default_model="anthropic/claude-sonnet-4.5",
+    #     default_workers=3,
+    # ),
+        "openai": APIConfig(
+        url="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        key_env="QWEN_API_KEY",
+        default_model="qwen2.5-14b-instruct",
         default_workers=3,
     ),
+    # "openai": APIConfig(
+    #     url="https://api.deepinfra.com/v1/openai/chat/completions",
+    #     key_env="DEEPINFRA_DEPLOY_KEY",
+    #     default_model="2020dfff/llama3-sqlcoder",
+    #     default_workers=1,  # Featherless has strict rate limits
+    # ),
     "anthropic": APIConfig(
         url="https://api.anthropic.com/v1/messages",
         key_env="ANTHROPIC_API_KEY",
@@ -50,7 +74,7 @@ PROVIDERS: Dict[str, APIConfig] = {
         url="https://api.deepinfra.com/v1/openai/chat/completions",
         key_env="DEEPINFRA_API_KEY",
         default_model="meta-llama/Meta-Llama-3.1-70B-Instruct",
-        default_workers=10,
+        default_workers=30,
     ),
     "gemini": APIConfig(
         url="https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",

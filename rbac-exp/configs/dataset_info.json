@@ -9,7 +9,7 @@
     "description": "Column-Level RBAC training dataset based on Spider train set (29,052 records). instruction field contains schema + column-level policy. output field is SQL for allowed, 'Sorry, I cannot answer.' for denied."
   },
   "column_level_rbac_spider_dev": {
-    "file_name": "../../data/selected/spider/column_level_rbac_dataset_spider_20251229.json",
+    "file_name": "../../data/selected/spider/column_level_rbac_dataset_spider_20260113.json",
     "columns": {
       "prompt": "instruction",
       "query": "input",

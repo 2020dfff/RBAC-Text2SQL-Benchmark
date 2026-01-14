@@ -14,8 +14,8 @@ RBAC_EXP_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$RBAC_EXP_DIR")"
 
 # Default values
-PREDICTION_PATH="rbac-exp/output/pred/final/rbac-result/pred_gpt-5-mini_spider_structured_rbac.sql"
-DATASET="spider"
+PREDICTION_PATH="rbac-exp/output/pred/final/rbac-result/pred_qwen2-5-14b-instruct_livesqlbench_rbac_structured_sft.sql"
+DATASET="livesqlbench"
 ROLE_JSON=""
 EXECUTE_SQL="true"
 FAIR_COMPARISON="true"
@@ -94,7 +94,7 @@ fi
 if [ -z "$ROLE_JSON" ]; then
     case $DATASET in
         spider)
-            ROLE_JSON="${ROOT_DIR}/data/selected/spider/column_level_rbac_dataset_spider_20251229.json"
+            ROLE_JSON="${ROOT_DIR}/data/selected/spider/column_level_rbac_dataset_spider_20260113.json"
             ;;
         bird)
             ROLE_JSON="${ROOT_DIR}/data/selected/bird/column_level_rbac_dataset_bird_20251230.json"
