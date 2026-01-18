@@ -122,3 +122,9 @@ htmlcov/
 outputs/
 plot/
 rbac-exp/output/
+
+# Ignore untracked experimental files
+notebooks/rbac-exp/
+rbac-exp/scripts/predict_cloud_copy.sh
+rbac-exp/scripts/predict_local_copy.sh
+scripts/
