@@ -84,9 +84,6 @@ Bird/
 # db migrations ignored for now
 db_migration/
 
-# experiments code ignore for now
-# experiments/
-
 # Large data files
 *.csv
 *.tsv
@@ -123,6 +120,5 @@ htmlcov/
 
 # Ignore output directories
 outputs/
-experiments/output/
 plot/
 rbac-exp/output/

@@ -141,7 +141,7 @@ class DataArguments:
         metadata={"help": "Predict input filename to do pred "},
     )
     predicted_out_filename: Optional[str] = field(
-        default="experiments/output/pred/pred_sql.sql",
+        default="rbac-exp/output/pred/pred_sql.sql",
         metadata={"help": "Filename to save predicted outcomes"},
     )
 

@@ -13,7 +13,7 @@ set -e
 
 # Default configuration
 DATASET="livesqlbench"  # spider, bird, livesqlbench
-PRED_FILE="rbac-exp/output/pred/final/baseline-result/pred_anthropic-claude-sonnet-4.5_livesqlbench_structured_baseline.sql"
+PRED_FILE="rbac-exp/output/pred/final/baseline-result/pred_google-gemma-3-27b-it_livesqlbench_structured_baseline.sql"
 OUTPUT_DIR="rbac-exp/output/eval_result"
 PLUG_VALUE="false"
 

@@ -18,7 +18,7 @@ ROOT_DIR="$(dirname "$RBAC_EXP_DIR")"
 # ============================================================================
 # DEFAULT CONFIGURATION - MODIFY THESE VALUES AS NEEDED
 # ============================================================================
-PREDICT_FILE="rbac-exp/output/pred/final/rbac-result/pred_qwen2.5-14b-instruct_bird_structured_rbac_role-schema.sql"
+PREDICT_FILE="rbac-exp/output/pred/pred_gpt-5-mini_bird_structured_rbac.sql"
 DATASET="bird"
 ROLE_JSON=""  # Auto-detected if empty
 NUM_TRIALS=5
@@ -82,7 +82,7 @@ if [[ -z "$ROLE_JSON" ]]; then
             ROLE_JSON="${ROOT_DIR}/data/selected/spider/column_level_rbac_dataset_spider_20260113.json"
             ;;
         bird)
-            ROLE_JSON="${ROOT_DIR}/data/selected/bird/column_level_rbac_dataset_bird_20251230.json"
+            ROLE_JSON="${ROOT_DIR}/data/selected/bird/column_level_rbac_dataset_bird_filtered_schema_20260111.json"
             ;;
         *)
             echo "Error: Unknown dataset '$DATASET'. Please specify --role_json"

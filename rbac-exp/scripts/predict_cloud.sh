@@ -25,10 +25,9 @@ load_env_file() {
 load_env_file ".env" || load_env_file "../../.env" || load_env_file "../../../.env" || true
 
 # Default parameters (aligned with experiments)
-PROVIDER="openai"  # Options: openai, anthropic, deepseek, deepinfra, gemini
-MODEL="qwen2.5-coder-7b-instruct"
-# MODEL="google/gemma-3-4b-it"  # Will use provider default
-DATASET="spider"  # spider, bird, livesqlbench
+PROVIDER="openai"  # Options: openai, anthropic, deepseek, deepinfra, gemini, deepinfra_openai
+MODEL="gpt-5-mini"  # Will use provider default
+DATASET="livesqlbench"  # spider, bird, livesqlbench
 INPUT_FILE=""  # Will be constructed from dataset
 OUTPUT_DIR="rbac-exp/output/pred"
 MAX_SAMPLES=""  # Set to empty for all samples
@@ -36,7 +35,7 @@ WORKERS="40"  # DeepInfra supports high concurrency
 RATE_LIMIT="0.1"  # Delay between requests (seconds)
 TEMPERATURE="0.0"
 MAX_TOKENS="4096"
-SHOT_NUM="0"  # Zero/Few-shot examples (0, 2, 4, 6)
+SHOT_NUM="6"  # Zero/Few-shot examples (0, 2, 4, 6)
 STRUCTURED="true"  # Use structured prompt format
 MODE="rbac"  # Evaluation mode: rbac or baseline
 ENABLE_RESUME="true"  # Resume from checkpoint if interrupted
@@ -124,8 +123,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate provider
-if [[ "$PROVIDER" != "openai" && "$PROVIDER" != "anthropic" && "$PROVIDER" != "deepseek" && "$PROVIDER" != "deepinfra" && "$PROVIDER" != "gemini" ]]; then
-    echo "Error: Provider must be 'openai', 'anthropic', 'deepseek', 'deepinfra', or 'gemini'"
+if [[ "$PROVIDER" != "openai" && "$PROVIDER" != "anthropic" && "$PROVIDER" != "deepseek" && "$PROVIDER" != "deepinfra" && "$PROVIDER" != "deepinfra_openai" && "$PROVIDER" != "gemini" ]]; then
+    echo "Error: Provider must be 'openai', 'anthropic', 'deepseek', 'deepinfra', 'deepinfra_openai', or 'gemini'"
     exit 1
 fi
 
@@ -137,6 +136,7 @@ if [[ -z "$INPUT_FILE" ]]; then
             ;;
         bird)
             INPUT_FILE="data/selected/bird/column_level_rbac_dataset_bird_20251230.json"
+            # INPUT_FILE="data/selected/bird/column_level_rbac_dataset_bird_filtered_schema_20260111.json"
             ;;
         livesqlbench)
             INPUT_FILE="data/selected/livesqlbench-full/crud_rbac_dataset_v2_20251230.json"

@@ -668,7 +668,8 @@ def evaluate_baseline_livesqlbench(
         sample_id = item.get("id", f"sample_{idx}")
         db_id = str(item.get("database", "")).strip()
         gold_sql = str(item.get("gold_sql", "")).strip()
-        pred_sql = str(item.get("pred_sql", "")).strip()
+        # Try cleaned_sql first (from prediction), fallback to pred_sql
+        pred_sql = str(item.get("cleaned_sql", item.get("pred_sql", ""))).strip()
         
         # Get operation type from dataset metadata (same as crud_level.py)
         op_type = item.get("metadata", {}).get("original_item", {}).get("operation", "unknown")

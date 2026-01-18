@@ -139,9 +139,8 @@ ANTHROPIC_API_KEY=sk-ant-your-key-here       # For Claude models
 Use the cloud inference script to generate SQL predictions:
 
 ```bash
-# goes to experiments/scripts/predict_cloud.sh
-# modify the Default parameters around line 29 to predict
-./experiments/scripts/predict_cloud.sh
+# Modify the Default parameters around line 29 to predict
+./rbac-exp/scripts/predict_cloud.sh
 ```
 
 **Available Providers and Models**:

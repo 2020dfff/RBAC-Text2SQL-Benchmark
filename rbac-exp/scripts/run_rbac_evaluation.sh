@@ -14,7 +14,7 @@ RBAC_EXP_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$RBAC_EXP_DIR")"
 
 # Default values
-PREDICTION_PATH="rbac-exp/output/pred/final/rbac-result/pred_qwen2-5-14b-instruct_livesqlbench_rbac_structured_sft.sql"
+PREDICTION_PATH="rbac-exp/output/pred/final/rbac-fewshot-result/pred_gpt-5-mini_livesqlbench_6shot_structured_rbac.sql"
 DATASET="livesqlbench"
 ROLE_JSON=""
 EXECUTE_SQL="true"

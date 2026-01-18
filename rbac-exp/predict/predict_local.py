@@ -37,7 +37,8 @@ from configs.prompts import (
     build_rbac_prompt, 
     get_fewshot_examples,
     get_rbac_type_from_dataset,
-    format_baseline_prompt
+    format_baseline_prompt,
+    build_structured_prompt
 )
 
 try:
@@ -57,7 +58,7 @@ def parse_args():
     parser.add_argument("--model_name_or_path", type=str, required=True,
                         help="Path to local model or HuggingFace model name")
     parser.add_argument("--template", type=str, default="chatml",
-                        choices=["chatml", "llama2", "llama2_zh", "mistral", "gemma", 
+                        choices=["chatml", "llama2", "llama2_zh", "llama3", "mistral", "gemma", 
                                  "vanilla", "default", "alpaca", "chatglm2", "chatglm3"],
                         help="Chat template for prompt formatting (default: chatml)")
     
@@ -96,6 +97,8 @@ def parse_args():
                         help="Use vLLM for inference (faster but requires vllm package)")
     parser.add_argument("--tensor_parallel_size", type=int, default=1,
                         help="Tensor parallel size for vLLM")
+    parser.add_argument("--batch_size", type=int, default=32,
+                        help="Batch size for vLLM inference (only used with --use_vllm)")
     
     # Checkpoint configuration
     parser.add_argument("--save_every", type=int, default=100,
@@ -107,6 +110,10 @@ def parse_args():
     parser.add_argument("--mode", type=str, default="rbac",
                         choices=["rbac", "baseline"],
                         help="Evaluation mode: 'rbac' (with RBAC prompts) or 'baseline' (Text2SQL only, no RBAC)")
+    
+    # Prompt mode configuration
+    parser.add_argument("--structured", action="store_true",
+                        help="Use structured prompt format (extracts schema from instruction, uses JSON policy)")
     
     # LoRA adapter configuration
     parser.add_argument("--checkpoint_dir", type=str, default=None,
@@ -207,21 +214,48 @@ class LocalModelInference:
             sys.argv = original_argv
     
     def _init_vllm(self, model_path: str, template: str, tensor_parallel_size: int):
-        """Initialize vLLM engine."""
+        """Initialize vLLM engine with optional LoRA support."""
         try:
             from vllm import LLM, SamplingParams
-            self.llm = LLM(
-                model=model_path,
-                tensor_parallel_size=tensor_parallel_size,
-                trust_remote_code=True,
-                max_model_len=4096,  # Limit context length to save memory
-            )
+            from vllm.lora.request import LoRARequest
+            
+            # vLLM configuration - optimized for RTX A5000 (24GB)
+            vllm_kwargs = {
+                "model": model_path,
+                "tensor_parallel_size": tensor_parallel_size,
+                "trust_remote_code": True,
+                "max_model_len": 2048,  # Limit context length to save memory
+                "gpu_memory_utilization": 0.70,  # Lower to avoid OOM during warmup
+                "dtype": "auto",
+                "max_num_seqs": 64,  # Reduce max concurrent sequences
+                "enforce_eager": True,  # Disable CUDA graphs to save memory
+            }
+            
+            # Enable LoRA if checkpoint_dir is specified
+            if self.checkpoint_dir:
+                vllm_kwargs["enable_lora"] = True
+                vllm_kwargs["max_lora_rank"] = 64  # Match training config
+                logger.info(f"vLLM LoRA enabled, adapter: {self.checkpoint_dir}")
+            
+            self.llm = LLM(**vllm_kwargs)
             self.SamplingParams = SamplingParams
+            self.LoRARequest = LoRARequest
             self.chat_model = None
+            
+            # Create LoRA request if adapter specified
+            self.lora_request = None
+            if self.checkpoint_dir:
+                self.lora_request = LoRARequest(
+                    lora_name="rbac_adapter",
+                    lora_int_id=1,
+                    lora_path=self.checkpoint_dir,
+                )
+                logger.info(f"LoRA adapter loaded: {self.checkpoint_dir}")
+            
             logger.info(f"Loaded vLLM model: {model_path} with tensor_parallel_size={tensor_parallel_size}")
         except ImportError:
             raise ImportError("vLLM not installed. Install with: pip install vllm")
-    
+
     def generate_single(self, query: str) -> str:
         """
         Generate response for a single query.
@@ -252,7 +286,11 @@ class LocalModelInference:
             temperature=self.temperature if self.temperature > 0 else 0.01,
             top_p=self.top_p,
         )
-        outputs = self.llm.generate([query], sampling_params)
+        # Use LoRA adapter if available
+        if self.lora_request:
+            outputs = self.llm.generate([query], sampling_params, lora_request=self.lora_request)
+        else:
+            outputs = self.llm.generate([query], sampling_params)
         return outputs[0].outputs[0].text.strip()
     
     def generate_batch(self, queries: List[str]) -> List[str]:
@@ -272,7 +310,11 @@ class LocalModelInference:
                 temperature=self.temperature if self.temperature > 0 else 0.01,
                 top_p=self.top_p,
             )
-            outputs = self.llm.generate(queries, sampling_params)
+            # Use LoRA adapter if available
+            if self.lora_request:
+                outputs = self.llm.generate(queries, sampling_params, lora_request=self.lora_request)
+            else:
+                outputs = self.llm.generate(queries, sampling_params)
             return [output.outputs[0].text.strip() for output in outputs]
         else:
             # Fallback to sequential generation
@@ -377,6 +419,103 @@ def prepare_rbac_prompts(
     return prompts
 
 
+def _run_batch_inference(
+    model, prompts, items, start_idx, results, 
+    cleaner_mode, mode, save_every,
+    sql_output_path, detailed_output_path, batch_size
+):
+    """
+    Run batch inference using vLLM for faster processing.
+    
+    Args:
+        model: LocalModelInference instance
+        prompts: List of formatted prompts
+        items: List of RBACDataItem
+        start_idx: Starting index (for resume)
+        results: Existing results list
+        cleaner_mode: Response cleaner mode
+        mode: Evaluation mode (rbac/baseline)
+        save_every: Checkpoint frequency
+        sql_output_path: Path to save SQL output
+        detailed_output_path: Path to save detailed JSON
+        batch_size: Batch size for inference
+        
+    Returns:
+        Updated results list
+    """
+    total = len(prompts)
+    
+    # Skip already processed samples
+    remaining_prompts = prompts[start_idx:]
+    remaining_items = items[start_idx:]
+    
+    logger.info(f"Batch inference: {len(remaining_prompts)} samples to process (batch_size={batch_size})")
+    
+    # Process in batches
+    for batch_start in range(0, len(remaining_prompts), batch_size):
+        batch_end = min(batch_start + batch_size, len(remaining_prompts))
+        batch_prompts = remaining_prompts[batch_start:batch_end]
+        batch_items = remaining_items[batch_start:batch_end]
+        
+        actual_idx = start_idx + batch_start
+        logger.info(f"Processing batch {actual_idx}-{actual_idx + len(batch_prompts) - 1} / {total}")
+        
+        try:
+            # Generate batch responses
+            responses = model.generate_batch(batch_prompts)
+            
+            # Process each response
+            for i, (response, item) in enumerate(zip(responses, batch_items)):
+                cleaned_sql = clean_model_response(response, mode=cleaner_mode)
+                
+                result = {
+                    "id": item.id,
+                    "instance_id": item.instance_id,
+                    "database": item.database,
+                    "gold_sql": item.gold_sql,
+                    "is_allowed": item.is_allowed,
+                    "cleaned_sql": cleaned_sql,
+                    "raw_response": response,
+                    "difficulty": item.difficulty,
+                    "mode": mode,
+                    "metadata": item.metadata,
+                }
+                results.append(result)
+                
+        except Exception as e:
+            logger.error(f"Error processing batch at {actual_idx}: {e}")
+            # Fallback to individual processing for failed batch
+            for prompt, item in zip(batch_prompts, batch_items):
+                try:
+                    response = model.generate_single(prompt)
+                    cleaned_sql = clean_model_response(response, mode=cleaner_mode)
+                except Exception as inner_e:
+                    response = f"ERROR: {str(inner_e)}"
+                    cleaned_sql = "Sorry, I cannot answer."
+                
+                result = {
+                    "id": item.id,
+                    "instance_id": item.instance_id,
+                    "database": item.database,
+                    "gold_sql": item.gold_sql,
+                    "is_allowed": item.is_allowed,
+                    "cleaned_sql": cleaned_sql,
+                    "raw_response": response,
+                    "difficulty": item.difficulty,
+                    "mode": mode,
+                    "metadata": item.metadata,
+                }
+                results.append(result)
+        
+        # Save checkpoint periodically
+        current_processed = len(results)
+        if current_processed % save_every < batch_size:
+            _save_checkpoint(results, sql_output_path, detailed_output_path)
+            logger.info(f"Checkpoint saved at sample {current_processed}")
+    
+    return results
+
+
 def run_inference(args):
     """Run local model inference on RBAC dataset."""
     import random
@@ -390,6 +529,7 @@ def run_inference(args):
     logger.info(f"Template: {args.template}")
     logger.info(f"Dataset: {args.dataset}")
     logger.info(f"Mode: {mode}")
+    logger.info(f"Structured: {getattr(args, 'structured', False)}")
     logger.info(f"Input: {args.predicted_input_filename}")
     logger.info(f"Output: {args.predicted_out_filename}")
     logger.info(f"Few-shot: {args.shot_num}")
@@ -447,11 +587,16 @@ def run_inference(args):
             items = deduped_items
     
     # Prepare prompts based on mode
+    use_structured = getattr(args, 'structured', False)
+    
     if mode == "baseline":
         logger.info("Using BASELINE prompts (Text2SQL only, no RBAC)")
         prompts = [format_baseline_prompt(item, args.dataset, args.shot_num) for item in items]
+    elif use_structured:
+        logger.info("Using STRUCTURED RBAC prompts (schema + JSON policy)")
+        prompts = [build_structured_prompt(item, args.dataset, args.shot_num) for item in items]
     else:
-        logger.info("Using RBAC prompts (with role/policy)")
+        logger.info("Using ORIGINAL RBAC prompts (with role/policy)")
         prompts = prepare_rbac_prompts(items, args.dataset, args.shot_num)
     
     # Setup output paths
@@ -474,65 +619,77 @@ def run_inference(args):
     # Determine cleaner mode
     cleaner_mode = "snowflake" if args.snowflake_mode else "default"
     
-    # Run inference
-    iterator = list(enumerate(zip(prompts, items)))
-    if tqdm:
-        iterator = tqdm(iterator, desc="Inference", initial=start_idx)
-    
-    for idx, (prompt, item) in iterator:
-        if idx < start_idx:
-            continue
+    # Run inference - use batch mode for vLLM
+    if args.use_vllm and hasattr(args, 'batch_size') and args.batch_size > 1:
+        logger.info(f"Using vLLM batch inference with batch_size={args.batch_size}")
+        results = _run_batch_inference(
+            model, prompts, items, start_idx, results, 
+            cleaner_mode, mode, args.save_every,
+            sql_output_path, detailed_output_path, args.batch_size
+        )
+    else:
+        # Sequential inference
+        iterator = list(enumerate(zip(prompts, items)))
+        if tqdm:
+            iterator = tqdm(iterator, desc="Inference", initial=start_idx)
         
-        try:
-            # Generate response
-            response = model.generate_single(prompt)
+        for idx, (prompt, item) in iterator:
+            if idx < start_idx:
+                continue
             
-            # Clean response (extract SQL or detect refusal)
-            cleaned_sql = clean_model_response(response, mode=cleaner_mode)
-            
-            # Get question from input field or metadata
-            question_text = getattr(item, 'input', '') or ''
-            if not question_text and item.metadata:
-                question_text = item.metadata.get('question', '') or item.metadata.get('input', '')
-            
-            # Get expected action (ALLOW/DENY)
-            expected_action = "ALLOW" if item.is_allowed else "DENY"
-            
-            # Store result
-            result = {
-                "id": item.id,
-                "question": question_text[:500] if question_text else "",
-                "gold_sql": item.gold_sql,
-                "expected_action": expected_action,
-                "raw_response": response,
-                "cleaned_sql": cleaned_sql,
-                "prompt_preview": prompt[:500] + "..." if len(prompt) > 500 else prompt,
-            }
-            results.append(result)
-            
-            # Save checkpoint periodically
-            if (idx + 1) % args.save_every == 0:
-                _save_checkpoint(results, sql_output_path, detailed_output_path)
-                logger.info(f"Checkpoint saved at sample {idx + 1}")
+            try:
+                # Generate response
+                response = model.generate_single(prompt)
                 
-        except Exception as e:
-            logger.error(f"Error processing sample {idx}: {e}")
-            # Get question from input field or metadata
-            question_text = getattr(item, 'input', '') or ''
-            if not question_text and item.metadata:
-                question_text = item.metadata.get('question', '') or item.metadata.get('input', '')
-            # Get expected action (ALLOW/DENY)
-            expected_action = "ALLOW" if item.is_allowed else "DENY"
-            result = {
-                "id": item.id,
-                "question": question_text[:500] if question_text else "",
-                "gold_sql": item.gold_sql,
-                "expected_action": expected_action,
-                "raw_response": f"ERROR: {str(e)}",
-                "cleaned_sql": "Sorry, I cannot answer.",
-                "prompt_preview": prompt[:500] + "..." if len(prompt) > 500 else prompt,
-            }
-            results.append(result)
+                # Clean response (extract SQL or detect refusal)
+                cleaned_sql = clean_model_response(response, mode=cleaner_mode)
+                
+                # Get question from input field or metadata
+                question_text = getattr(item, 'input', '') or ''
+                if not question_text and item.metadata:
+                    question_text = item.metadata.get('question', '') or item.metadata.get('input', '')
+                
+                # Get expected action (ALLOW/DENY)
+                expected_action = "ALLOW" if item.is_allowed else "DENY"
+                
+                # Store result - aligned with predict_cloud.py format
+                result = {
+                    "id": item.id,
+                    "instance_id": item.instance_id,
+                    "database": item.database,
+                    "gold_sql": item.gold_sql,
+                    "is_allowed": item.is_allowed,
+                    "cleaned_sql": cleaned_sql,
+                    "raw_response": response,
+                    "difficulty": item.difficulty,
+                    "mode": mode,
+                    "metadata": item.metadata,
+                }
+                results.append(result)
+                
+                # Save checkpoint periodically
+                if (idx + 1) % args.save_every == 0:
+                    _save_checkpoint(results, sql_output_path, detailed_output_path)
+                    logger.info(f"Checkpoint saved at sample {idx + 1}")
+                    
+            except Exception as e:
+                logger.error(f"Error processing sample {idx}: {e}")
+                # Get question from input field or metadata
+                question_text = getattr(item, 'input', '') or ''
+                if not question_text and item.metadata:
+                    question_text = item.metadata.get('question', '') or item.metadata.get('input', '')
+                # Get expected action (ALLOW/DENY)
+                expected_action = "ALLOW" if item.is_allowed else "DENY"
+                result = {
+                    "id": item.id,
+                    "question": question_text[:500] if question_text else "",
+                    "gold_sql": item.gold_sql,
+                    "expected_action": expected_action,
+                    "raw_response": f"ERROR: {str(e)}",
+                    "cleaned_sql": "Sorry, I cannot answer.",
+                    "prompt_preview": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                }
+                results.append(result)
     
     # Final save
     _save_checkpoint(results, sql_output_path, detailed_output_path)
