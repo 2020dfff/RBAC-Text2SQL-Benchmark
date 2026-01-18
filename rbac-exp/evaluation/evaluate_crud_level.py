@@ -30,7 +30,7 @@ Usage:
     python -m rbac-exp.evaluation.evaluate_crud_level \
     --prediction_path rbac-exp/output/pred/pred_deepseek-reasoner_livesqlbench_rbac.sql \
     --role_json data/selected/livesqlbench-full/crud_rbac_dataset_v2_20251230.json \
-    --db_user feiy --db_password REDACTED \
+    --db_user postgres --db_password your_password \
     --num_workers 8 --fair_comparison 2>&1 | tee /tmp/livesqlbench_eval_v2.log
 
 Six-category classification:

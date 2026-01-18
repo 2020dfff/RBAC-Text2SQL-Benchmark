@@ -14,7 +14,7 @@ For LiveSQLBench baseline:
 Usage:
     python -m rbac-exp.evaluation.evaluate_crud_baseline \
         --pred rbac-exp/output/pred/pred_deepseek-chat_livesqlbench_baseline.sql \
-        --db_user feiy --db_password REDACTED
+        --db_user postgres --db_password your_password
 """
 
 import argparse
@@ -901,7 +901,7 @@ def main():
     # PostgreSQL configuration
     parser.add_argument("--db_host", default="localhost", help="PostgreSQL host")
     parser.add_argument("--db_port", type=int, default=5432, help="PostgreSQL port")
-    parser.add_argument("--db_user", default="feiy", help="PostgreSQL user")
+    parser.add_argument("--db_user", default="postgres", help="PostgreSQL user")
     parser.add_argument("--db_password", required=True, help="PostgreSQL password")
     
     # Database reinitialization

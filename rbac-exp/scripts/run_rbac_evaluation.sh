@@ -23,6 +23,12 @@ NUM_TRIALS="5"
 NUM_WORKERS="8"
 OUTPUT_DIR=""
 
+# PostgreSQL configuration (for livesqlbench)
+DB_USER="postgres"
+DB_PASSWORD="your_password"
+DB_HOST="localhost"
+DB_PORT="5432"
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -150,8 +156,8 @@ if [ "$DATASET" = "livesqlbench" ]; then
     CMD="python -m rbac-exp.evaluation.evaluate_crud_level \
         --prediction_path \"$PREDICTION_PATH\" \
         --role_json \"$ROLE_JSON\" \
-        --db_user feiy \
-        --db_password REDACTED \
+        --db_user \"$DB_USER\" \
+        --db_password \"$DB_PASSWORD\" \
         --num_workers $NUM_WORKERS"
 else
     # Column-level evaluation (spider, bird)

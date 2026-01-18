@@ -40,23 +40,17 @@ PROVIDERS: Dict[str, APIConfig] = {
     #     default_model="gemini-2.5-flash",
     #     default_workers=3,
     # ),
-    "openai": APIConfig(
-        url="https://aiberm.com/v1/chat/completions",
-        key_env="ANTHROPIC_3rd_PARTY_API_KEY",
-        default_model="anthropic/claude-sonnet-4.5",
-        default_workers=3,
-    ),
-    #     "openai": APIConfig(
-    #     url="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-    #     key_env="QWEN_API_KEY",
-    #     default_model="qwen2.5-14b-instruct",
+    # "openai": APIConfig(
+    #     url="https://aiberm.com/v1/chat/completions",
+    #     key_env="ANTHROPIC_3rd_PARTY_API_KEY",
+    #     default_model="anthropic/claude-sonnet-4.5",
     #     default_workers=3,
     # ),
-    "deepinfra_openai": APIConfig(
-        url="https://api.deepinfra.com/v1/openai/chat/completions",
-        key_env="DEEPINFRA_DEPLOY_KEY",
-        default_model="2020dfff/llama3-sqlcoder",
-        default_workers=1,  # Featherless has strict rate limits
+        "openai": APIConfig(
+        url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        key_env="QWEN_API_KEY",
+        default_model="qwen2.5-14b-instruct",
+        default_workers=3,
     ),
     "anthropic": APIConfig(
         url="https://api.anthropic.com/v1/messages",
@@ -74,7 +68,7 @@ PROVIDERS: Dict[str, APIConfig] = {
         url="https://api.deepinfra.com/v1/openai/chat/completions",
         key_env="DEEPINFRA_API_KEY",
         default_model="meta-llama/Meta-Llama-3.1-70B-Instruct",
-        default_workers=30,
+        default_workers=10,
     ),
     "gemini": APIConfig(
         url="https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
