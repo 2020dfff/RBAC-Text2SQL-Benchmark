@@ -18,7 +18,7 @@ class ChatModel:
     #     system: Optional[str] = None,
     #     **input_kwargs
     # ) -> List[str]:
-    #     # 批量编码prompt
+    #     # Batch encode prompts
     #     system = system or self.system_prompt
     #     if histories is None:
     #         histories = [[] for _ in range(len(queries))]
@@ -34,9 +34,9 @@ class ChatModel:
     #         )
     #         prompts.append(prompt)
     #         prompt_lengths.append(len(prompt))
-    #     # 转为tensor
+    #     # Convert to tensor
     #     input_ids = torch.tensor(prompts, device=self.model.device)
-    #     # 生成参数
+    #     # Generation parameters
     #     do_sample = input_kwargs.pop("do_sample", None)
     #     temperature = input_kwargs.pop("temperature", None)
     #     top_p = input_kwargs.pop("top_p", None)
@@ -69,9 +69,9 @@ class ChatModel:
     #         generation_config=GenerationConfig(**generating_args),
     #         logits_processor=get_logits_processor(),
     #     )
-    #     # 批量生成
+    #     # Batch generation
     #     generation_output = self.model.generate(**gen_kwargs)
-    #     # 解码每个样本
+    #     # Decode each sample
     #     responses = []
     #     for i, output_ids in enumerate(generation_output):
     #         output = output_ids.tolist()[prompt_lengths[i]:]

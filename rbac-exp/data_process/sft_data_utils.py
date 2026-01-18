@@ -314,7 +314,7 @@ register_template(
     name="llama2_zh",
     prefix=["<<SYS>>\n{{system}}\n<</SYS>>\n\n"],
     prompt=["[INST] {{query}} [/INST] "],
-    system="You are a helpful assistant. 你是一个乐于助人的助手。",
+    system="You are a helpful assistant.",
     sep=[],
 )
 
@@ -357,7 +357,7 @@ Supports: https://huggingface.co/THUDM/chatglm2-6b
 register_template(
     name="chatglm2",
     prefix=[{"token": "[gMASK]"}, {"token": "sop"}, "{{system}}"],
-    prompt=["[Round {{idx}}]\n\n问：{{query}}\n\n答："],
+    prompt=["[Round {{idx}}]\n\nQuestion: {{query}}\n\nAnswer:"],
     system="",
     sep=["\n\n"],
 )

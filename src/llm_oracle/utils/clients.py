@@ -3,8 +3,8 @@ Client handlers for different model providers
 """
 
 import time
-from google.generativeai import types  # 修复 types 导入
-from azure.ai.inference.models import SystemMessage, UserMessage  # 修复 SystemMessage 和 UserMessage 导入
+from google.generativeai import types  # Fix types import
+from azure.ai.inference.models import SystemMessage, UserMessage  # Fix SystemMessage and UserMessage import
 
 from ..config.models import (
     MODELS_WITHOUT_TOP_P,
@@ -206,7 +206,7 @@ def deepseek_chat_query(
                 "top_p": top_p,
                 "max_tokens": max_completion_tokens,
                 "stream": False,
-                # 可选参数
+                # Optional parameters
                 # "presence_penalty": 0,
                 # "frequency_penalty": 0,
                 # "stop": None,
@@ -223,7 +223,7 @@ def deepseek_chat_query(
             if not query_key:
                 query_key = prompt_user
                 
-            # 包含完整的usage信息
+            # Include complete usage info
             usage = {}
             if hasattr(completion, 'usage'):
                 usage = completion.usage._asdict() if hasattr(completion.usage, '_asdict') else vars(completion.usage)
