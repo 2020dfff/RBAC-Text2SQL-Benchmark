@@ -65,7 +65,7 @@ export DEEPSEEK_API_KEY="your-key"
 
 ## 2. Dataset Preparation
 
-### 2.1 Download Base Datasets
+### 2.1 Download Databases
 
 **Spider** (required for column-level evaluation):
 ```bash
@@ -77,12 +77,13 @@ mv data/spider/spider_data/* data/spider/ && rm -rf data/spider/spider_data
 **BIRD** (optional):
 ```bash
 # Follow instructions at https://bird-bench.github.io/
+# The version of bird-dev is 20251106
 # Place databases in data/Bird/dev_databases/
 ```
 
 **LiveSQLBench** (for CRUD-level evaluation):
 ```bash
-# Request access from https://huggingface.co/datasets/birdsql/livesqlbench-base-lite-sqlite
+# Request access from https://huggingface.co/datasets/birdsql/livesqlbench-base-full-v1
 # Place PostgreSQL databases in data/livesqlbench-full-postgresql/
 ```
 
@@ -199,11 +200,11 @@ bash scripts/predict_cloud.sh --provider openai --model gpt-4o-mini --dataset sp
 
 | Provider | Models |
 |----------|--------|
-| `openai` | gpt-4o-mini, gpt-4o, o3-mini |
+| `openai` | gpt-4o-mini, gpt-5-mini, gpt-5 |
 | `anthropic` | claude-sonnet-4-5, claude-3-5-sonnet |
-| `gemini` | gemini-2.5-flash, gemini-2.0-pro |
+| `gemini` | gemini-2.5-flash |
 | `deepseek` | deepseek-chat, deepseek-reasoner |
-| `deepinfra` | google/gemma-3-27b-it, meta-llama/Llama-3.3-70B-Instruct |
+| `deepinfra` | google/gemma-3-4b-it, google/gemma-3-27b-it, ... |
 
 ---
 
