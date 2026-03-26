@@ -128,3 +128,10 @@ notebooks/rbac-exp/
 rbac-exp/scripts/predict_cloud_copy.sh
 rbac-exp/scripts/predict_local_copy.sh
 scripts/
+
+# Runtime artifacts
+nohup.out
+*.pdf
+
+# Claude Code config
+CLAUDE.md
