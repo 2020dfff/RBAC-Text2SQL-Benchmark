@@ -1,12 +1,21 @@
 {
   "column_level_rbac_spider_train": {
+    "file_name": "../../data/selected/spider/column_level_rbac_dataset_spider_train_v3_no_sm.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    },
+    "description": "Column-Level RBAC v3 training dataset (no SystemManager, with DataOperator). 40,297 records, 39.5% allow / 60.5% deny."
+  },
+  "column_level_rbac_spider_train_v2": {
     "file_name": "../../data/selected/spider/column_level_rbac_dataset_spider_train_20260109.json",
     "columns": {
       "prompt": "instruction",
       "query": "input",
       "response": "output"
     },
-    "description": "Column-Level RBAC training dataset based on Spider train set (29,052 records). instruction field contains schema + column-level policy. output field is SQL for allowed, 'Sorry, I cannot answer.' for denied."
+    "description": "Column-Level RBAC v2 training dataset (with SystemManager). 29,052 records. Legacy."
   },
   "column_level_rbac_spider_dev": {
     "file_name": "../../data/selected/spider/column_level_rbac_dataset_spider_20260113.json",

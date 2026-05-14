@@ -24,10 +24,11 @@ NUM_WORKERS="8"
 OUTPUT_DIR=""
 
 # PostgreSQL configuration (for livesqlbench)
-DB_USER="postgres"
-DB_PASSWORD="your_password"
-DB_HOST="localhost"
-DB_PORT="5432"
+# Required env vars: PG_USER, PG_PWD (do NOT hard-code credentials here)
+DB_USER="${PG_USER:?Set PG_USER env var: export PG_USER=<your_pg_user>}"
+DB_PASSWORD="${PG_PWD:?Set PG_PWD env var: export PG_PWD=<your_pg_password>}"
+DB_HOST="${PG_HOST:-localhost}"
+DB_PORT="${PG_PORT:-5432}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

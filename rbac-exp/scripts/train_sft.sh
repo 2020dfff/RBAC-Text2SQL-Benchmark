@@ -30,7 +30,7 @@ MAX_SAMPLES=""                                  # Empty = all samples, or set nu
 # TRAINING CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 NUM_GPUS=4                                      # Number of GPUs
-NUM_TRAIN_EPOCHS=1                              # Number of epochs
+NUM_TRAIN_EPOCHS=8                              # Number of epochs (matches paper Table 8 / Hopper training)
 BATCH_SIZE=1                                    # Per-device batch size
 GRADIENT_ACCUMULATION=4                         # Gradient accumulation steps
 LEARNING_RATE=2e-4                              # Learning rate

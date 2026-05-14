@@ -135,3 +135,15 @@ nohup.out
 
 # Claude Code config
 CLAUDE.md
+
+# Large model weights / LoRA adapters
+sft_adapters/
+sft_adapters*.tar.gz
+*.safetensors
+
+# SIGMOD paper work (confidential, never commit)
+SIGMOD/
+
+# Local-only work dirs (not committed for now, may revisit later)
+SOLUTION/
+hopper_jobs/

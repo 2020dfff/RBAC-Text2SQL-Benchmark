@@ -46,8 +46,14 @@ PROVIDERS: Dict[str, APIConfig] = {
     #     default_model="anthropic/claude-sonnet-4.5",
     #     default_workers=3,
     # ),
+    "aiberm": APIConfig(
+        url="https://aiberm.com/v1/chat/completions",
+        key_env="ANTHROPIC_3rd_PARTY_API_KEY",
+        default_model="anthropic/claude-sonnet-4.5",
+        default_workers=5,
+    ),
         "openai": APIConfig(
-        url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        url="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         key_env="QWEN_API_KEY",
         default_model="qwen2.5-14b-instruct",
         default_workers=3,
@@ -157,13 +163,13 @@ class CloudAPIClient:
                     "temperature": temperature,
                 },
             }
-        else:  # OpenAI-compatible (openai, deepseek, deepinfra)
+        else:  # OpenAI-compatible (openai, deepseek, deepinfra, aiberm)
             # GPT-5 and o-series models use max_completion_tokens instead of max_tokens
-            uses_completion_tokens = self.provider == "openai" and (
-                self.model_name.startswith("gpt-5") or 
-                self.model_name.startswith("gpt-4.1") or
-                self.model_name.startswith("gpt-4o") or
-                self.model_name.startswith("o1") or 
+            uses_completion_tokens = (self.provider in ("openai", "aiberm")) and (
+                "gpt-5" in self.model_name or
+                "gpt-4.1" in self.model_name or
+                "gpt-4o" in self.model_name or
+                self.model_name.startswith("o1") or
                 self.model_name.startswith("o3")
             )
             # GPT-5 doesn't support custom temperature (enforces default 1.0)
