@@ -127,7 +127,7 @@ rbac-exp/output/
 notebooks/rbac-exp/
 rbac-exp/scripts/predict_cloud_copy.sh
 rbac-exp/scripts/predict_local_copy.sh
-scripts/
+/scripts/
 
 # Runtime artifacts
 nohup.out
