@@ -89,16 +89,27 @@ mv data/spider/spider_data/* data/spider/ && rm -rf data/spider/spider_data
 
 ### 2.2 RBAC-Augmented Datasets
 
-Pre-generated RBAC datasets are included in the repository under `data/selected/`:
+Pre-generated RBAC datasets are included in the repository under `data/selected/`.
+The current (v3) release replaces the original full-access `SystemManager` role with
+multiple scoped `DataOperator` administrator roles whose policies are sampled with a
+fixed public seed (`seed=42`); see `scripts/generate_v3_train_data.py` for the exact
+procedure.
 
 ```
 data/selected/
-├── spider/                                    # Column-level RBAC (Spider)
-│   └── column_level_rbac_dataset_spider_20260113.json
-├── bird/                                      # Column-level RBAC (BIRD)
-│   └── column_level_rbac_dataset_bird_20251230.json
-└── livesqlbench-full/                         # CRUD-level RBAC (LiveSQLBench)
-    └── crud_rbac_dataset_v2_20251230.json
+├── spider/                                                       # Column-level RBAC (Spider)
+│   └── column_level_rbac_dataset_spider_v3_no_sm.json           # 6,926 role-conditioned instances
+├── bird/                                                         # Column-level RBAC (BIRD)
+│   └── column_level_rbac_dataset_bird_v3_no_sm.json             # 10,175 role-conditioned instances
+└── livesqlbench-full/                                            # CRUD-level RBAC (LiveSQLBench)
+    └── crud_rbac_dataset_v3_no_sm.json.gz                        # 4,401 role-conditioned instances (gzipped)
+```
+
+The LiveSQLBench file is shipped gzipped to stay within GitHub's per-file size limit.
+Decompress in place before running inference / evaluation:
+
+```bash
+gunzip -k data/selected/livesqlbench-full/crud_rbac_dataset_v3_no_sm.json.gz
 ```
 
 No additional download is required for the RBAC datasets.
