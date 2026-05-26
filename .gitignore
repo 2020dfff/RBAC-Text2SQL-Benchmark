@@ -147,3 +147,10 @@ SIGMOD/
 # Local-only work dirs (not committed for now, may revisit later)
 SOLUTION/
 hopper_jobs/
+
+# Solution-paper artifacts (NOT part of the benchmark repo)
+rbac-exp/probe/
+constrained_decoding/
+
+# Paper drafts and submission artifacts
+*.zip
