@@ -90,12 +90,12 @@ mv data/spider/spider_data/* data/spider/ && rm -rf data/spider/spider_data
 ### 2.2 RBAC-Augmented Datasets
 
 The RBAC datasets are hosted on HuggingFace:
-**[`2020dfff/RBAC-Text2SQL-Benchmark`](https://huggingface.co/datasets/2020dfff/RBAC-Text2SQL-Benchmark)**
+**[`sharkiefff/RBAC-Text2SQL-Benchmark`](https://huggingface.co/datasets/sharkiefff/RBAC-Text2SQL-Benchmark)**
 
 ```bash
 bash scripts/download_data.sh
 # equivalently:
-# huggingface-cli download 2020dfff/RBAC-Text2SQL-Benchmark \
+# huggingface-cli download sharkiefff/RBAC-Text2SQL-Benchmark \
 #     --repo-type dataset --local-dir data/selected
 ```
 

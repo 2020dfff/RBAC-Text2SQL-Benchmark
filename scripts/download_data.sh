@@ -8,7 +8,7 @@
 # Usage:  bash scripts/download_data.sh
 set -euo pipefail
 
-HF_REPO="${HF_REPO:-2020dfff/RBAC-Text2SQL-Benchmark}"
+HF_REPO="${HF_REPO:-sharkiefff/RBAC-Text2SQL-Benchmark}"
 DEST="${DEST:-data/selected}"
 
 if ! command -v huggingface-cli >/dev/null 2>&1; then
