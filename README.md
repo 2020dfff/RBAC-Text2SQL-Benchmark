@@ -89,30 +89,37 @@ mv data/spider/spider_data/* data/spider/ && rm -rf data/spider/spider_data
 
 ### 2.2 RBAC-Augmented Datasets
 
-Pre-generated RBAC datasets are included in the repository under `data/selected/`.
-The current (v3) release replaces the original full-access `SystemManager` role with
-multiple scoped `DataOperator` administrator roles whose policies are sampled with a
-fixed public seed (`seed=42`); see `scripts/generate_v3_train_data.py` for the exact
-procedure.
+The RBAC datasets are hosted on HuggingFace:
+**[`2020dfff/RBAC-Text2SQL-Benchmark`](https://huggingface.co/datasets/2020dfff/RBAC-Text2SQL-Benchmark)**
+
+```bash
+bash scripts/download_data.sh
+# equivalently:
+# huggingface-cli download 2020dfff/RBAC-Text2SQL-Benchmark \
+#     --repo-type dataset --local-dir data/selected
+```
+
+This populates the layout the code expects:
 
 ```
 data/selected/
-├── spider/                                                       # Column-level RBAC (Spider)
-│   └── column_level_rbac_dataset_spider_v3_no_sm.json           # 6,926 role-conditioned instances
-├── bird/                                                         # Column-level RBAC (BIRD)
-│   └── column_level_rbac_dataset_bird_v3_no_sm.json             # 10,175 role-conditioned instances
-└── livesqlbench-full/                                            # CRUD-level RBAC (LiveSQLBench)
-    └── crud_rbac_dataset_v3_no_sm.json.gz                        # 4,401 role-conditioned instances (gzipped)
+├── spider/                                                      # Column-level RBAC (Spider)
+│   ├── column_level_rbac_dataset_spider_v3_no_sm.json          # 6,926 instances  (evaluation)
+│   └── column_level_rbac_dataset_spider_train_v3_no_sm.json    # 40,297 instances (training split)
+├── bird/                                                        # Column-level RBAC (BIRD)
+│   └── column_level_rbac_dataset_bird_v3_no_sm.json            # 10,175 instances (evaluation)
+└── livesqlbench-full/                                           # CRUD-level RBAC (LiveSQLBench)
+    └── crud_rbac_dataset_v3_no_sm.json                          # 4,401 instances  (evaluation)
 ```
 
-The LiveSQLBench file is shipped gzipped to stay within GitHub's per-file size limit.
-Decompress in place before running inference / evaluation:
+The **evaluation benchmark is 21,502 instances** (Spider 6,926 + BIRD 10,175 +
+LiveSQLBench 4,401). The Spider training split is additional and is not part of the
+evaluation set.
 
-```bash
-gunzip -k data/selected/livesqlbench-full/crud_rbac_dataset_v3_no_sm.json.gz
-```
-
-No additional download is required for the RBAC datasets.
+**Roles (v3).** This release replaces the original full-access `SystemManager` role with
+multiple scoped `DataOperator` administrator roles alongside domain roles, with policies
+sampled under a fixed public seed (`seed=42`); see `scripts/generate_v3_train_data.py`
+for the exact procedure.
 
 ### 2.3 Dataset Format
 
@@ -140,15 +147,17 @@ No additional download is required for the RBAC datasets.
 {
   "instance_id": "solar_panel_1",
   "db_id": "solar_panel",
-  "question": "Calculate system unavailability...",
-  "role": "SystemManager",
+  "question": "How likely is the 'solar plant west davidport' ...",
+  "role": "PlantManager",
   "policy": {
-    "DDL": true,
-    "INSERT": ["electrical_performance", "plants"],
-    "DELETE": ["electrical_performance", "plants"],
+    "role": "PlantManager",
+    "description": "Manages solar plant operations, maintenance scheduling, and performance monitoring",
+    "DDL": false,
+    "INSERT": ["plant_record", "alert"],
+    "DELETE": ["alert"],
     "tables": {
-      "electrical_performance": {"SELECT": ["*"], "UPDATE": ["*"]},
-      "plants": {"SELECT": ["*"], "UPDATE": ["*"]}
+      "electrical_performance": {"SELECT": ["snaplink", "elec_perf_snapshot"], "UPDATE": []},
+      "environmental_conditions": {"SELECT": ["snapref", "env_snapshot"], "UPDATE": []}
     }
   },
   "output": "SELECT ROUND(om.mttrh / (om.mtbfh + om.mttrh), 4) FROM ...",
