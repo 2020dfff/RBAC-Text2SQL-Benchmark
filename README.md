@@ -116,6 +116,22 @@ The **evaluation benchmark is 21,502 instances** (Spider 6,926 + BIRD 10,175 +
 LiveSQLBench 4,401). The Spider training split is additional and is not part of the
 evaluation set.
 
+> **⚠️ LiveSQLBench ground truth is not redistributed.** The LiveSQLBench authors gate
+> ground truth and test cases behind an email request to prevent leakage via automated
+> crawling, and we respect that policy: the CRUD split ships with `gold_sql` removed and
+> `output` blanked for ALLOW items (`gt_redacted: true`). Request the ground truth from
+> **bird.bench25@gmail.com** (subject `[livesqlbench-base-full-v1 GT&Test Cases]`), then
+> join it back by `instance_id`:
+>
+> ```bash
+> python scripts/merge_livesqlbench_gt.py \
+>     --rbac data/selected/livesqlbench-full/crud_rbac_dataset_v3_no_sm.json \
+>     --gt   /path/to/livesqlbench_gt.jsonl \
+>     --out  data/selected/livesqlbench-full/crud_rbac_dataset_v3_no_sm.gt.json
+> ```
+>
+> Spider and BIRD are unaffected — their gold SQL is publicly distributed upstream.
+
 **Roles (v3).** This release replaces the original full-access `SystemManager` role with
 multiple scoped `DataOperator` administrator roles alongside domain roles, with policies
 sampled under a fixed public seed (`seed=42`); see `scripts/generate_v3_train_data.py`
