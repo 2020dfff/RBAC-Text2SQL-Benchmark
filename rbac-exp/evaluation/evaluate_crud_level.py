@@ -45,6 +45,13 @@ Six-category classification:
 import argparse
 import json
 import logging
+import sys
+from pathlib import Path
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from evaluation.protocol_entry import dispatch_cli
+    dispatch_cli(crud=True)
+
 import os
 import queue
 import random
@@ -1484,6 +1491,9 @@ def evaluate_crud_level(
     dry_run: bool = False,
     num_workers: int = 4,
     num_trials: int = 5,
+    protocol: str = "v2",
+    execution_cache: str = None,
+    schemas: str = None,
 ) -> Dict[str, Any]:
     """
     Evaluate CRUD-level RBAC predictions using PostgreSQL backend with ephemeral DB support.
@@ -1491,6 +1501,18 @@ def evaluate_crud_level(
     Args:
         num_trials: Number of trials for fair_comparison mode (default: 5, 1 = single trial)
     """
+
+    if protocol != "legacy-v1":
+        if protocol != "v2":
+            raise ValueError("unknown evaluation protocol")
+        if max_samples is not None:
+            raise ValueError("v2 requires an explicit aligned subset, not silent truncation")
+        if not dry_run and execution_cache is None:
+            raise ValueError("v2 CRUD replay requires cached EX or explicit dry_run=True; see EVALUATION_PROTOCOL.md")
+        from evaluation.evaluate_protocol_v2 import evaluate
+        return evaluate(role_dataset_path, prediction_path, schemas=schemas, output_dir=output_dir,
+                        crud=True, fair_comparison=fair_comparison, num_trials=num_trials,
+                        execution_cache=execution_cache)
     
     if not dry_run and not POSTGRES_AVAILABLE:
         raise RuntimeError("PostgreSQL support required. Install: pip install psycopg2-binary")
@@ -1925,6 +1947,7 @@ def main():
             logger.warning(f"{fail} databases failed to reinitialize, but continuing...")
     
     evaluate_crud_level(
+        protocol="legacy-v1",
         role_dataset_path=args.role_json,
         prediction_path=args.prediction_path,
         pg_config=pg_config,

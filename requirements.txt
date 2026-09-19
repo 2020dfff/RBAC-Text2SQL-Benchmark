@@ -17,7 +17,7 @@ accelerate>=0.25.0
 pandas>=1.5.0
 numpy>=1.24.0
 sqlparse>=0.4.0
-sqlglot>=11.4.1
+sqlglot==30.18.0
 nltk>=3.8.0
 tiktoken==0.11.0
 trl==0.22.1

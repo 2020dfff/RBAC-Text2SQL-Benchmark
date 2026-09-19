@@ -11,6 +11,13 @@ Implements six-category classification:
 5. violation_correct: Denied + model provides correct SQL (breach)
 6. violation_wrong: Denied + model provides wrong SQL (breach)
 """
+import sys
+from pathlib import Path
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from evaluation.protocol_entry import dispatch_cli
+    dispatch_cli(crud=False)
+
 import os
 import sys
 import json
@@ -530,6 +537,9 @@ def evaluate_column_level(
     fair_comparison: bool = False,
     plug_value: bool = False,
     num_trials: int = 5,
+    protocol: str = "v2",
+    execution_cache: Optional[str] = None,
+    schemas: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Evaluate column-level RBAC predictions (aligned with experiments).
@@ -547,6 +557,14 @@ def evaluate_column_level(
     Returns:
         Dictionary with evaluation results (aggregated if num_trials > 1)
     """
+
+    if protocol != "legacy-v1":
+        if protocol != "v2":
+            raise ValueError("unknown evaluation protocol")
+        from evaluation.protocol_entry import evaluate_read_api
+        return evaluate_read_api(role_json_file, predict_file, dataset, db_dir, output_dir,
+                                 execute_sql, fair_comparison, plug_value=plug_value, num_trials=num_trials,
+                                 execution_cache=execution_cache, schemas=schemas)
     # Setup paths
     if db_dir is None:
         paths = get_dataset_paths(dataset)
@@ -1020,6 +1038,7 @@ def main():
             raise ValueError(f"Dataset directory not found: {dataset_dir}")
     
     evaluate_column_level(
+        protocol="legacy-v1",
         role_json_file=args.role_json,
         predict_file=args.prediction_path,
         dataset=args.dataset,

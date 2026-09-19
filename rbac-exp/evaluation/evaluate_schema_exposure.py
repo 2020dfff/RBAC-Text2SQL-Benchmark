@@ -17,6 +17,13 @@ Based on Table 4 analysis in the ICDE 2026 paper.
 import argparse
 import json
 import logging
+import sys
+from pathlib import Path
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from evaluation.protocol_entry import dispatch_cli
+    dispatch_cli(crud=False)
+
 import os
 import re
 import sqlite3
@@ -326,6 +333,9 @@ def evaluate_with_schema_exposure(
     execute_sql: bool = True,
     fair_comparison: bool = False,
     num_trials: int = 5,
+    protocol: str = "v2",
+    execution_cache: Optional[str] = None,
+    schemas: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Evaluate column-level RBAC with schema exposure analysis.
@@ -348,6 +358,14 @@ def evaluate_with_schema_exposure(
     Returns:
         Dictionary with evaluation results including schema exposure analysis
     """
+
+    if protocol != "legacy-v1":
+        if protocol != "v2":
+            raise ValueError("unknown evaluation protocol")
+        from evaluation.protocol_entry import evaluate_read_api
+        return evaluate_read_api(role_json_file, predict_file, dataset, db_dir, output_dir,
+                                 execute_sql, fair_comparison, num_trials=num_trials,
+                                 execution_cache=execution_cache, schemas=schemas)
     import random
     
     # Setup paths
@@ -907,6 +925,7 @@ def main():
     args = parse_args()
     
     results = evaluate_with_schema_exposure(
+        protocol="legacy-v1",
         role_json_file=args.role_json,
         predict_file=args.predict,
         dataset=args.dataset,
